@@ -4,12 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/kyungw00k/sw/internal/client"
-	"github.com/kyungw00k/sw/internal/daemon"
 	"github.com/kyungw00k/sw/pkg/protocol"
 	"github.com/spf13/cobra")
 
@@ -70,9 +68,6 @@ undetected browser automation.`,
 		newHoverCmd(),
 		newScreenshotCmd(),
 		newListCmd(),
-		newTabsCmd(),
-		newStorageCmd(),
-		newCookiesCmd(),
 		newDblClickCmd(),
 		newUncheckCmd(),
 		newDragCmd(),
@@ -94,7 +89,6 @@ undetected browser automation.`,
 		newStateSaveCmd(),
 		newStateLoadCmd(),
 		newKillAllCmd(),
-		newDaemonCmd(),
 		newCookieListCmd(),
 		newCookieGetCmd(),
 		newCookieSetCmd(),
@@ -115,7 +109,6 @@ undetected browser automation.`,
 		newDeleteDataCmd(),
 		newCloseAllCmd(),
 		newShowCmd(),
-		newConfigPrintCmd(),
 		newRunCodeCmd(),
 		newConsoleCmd(),
 		newNetworkCmd(),
@@ -124,9 +117,7 @@ undetected browser automation.`,
 		newRouteCmd(),
 		newRouteListCmd(),
 		newUnrouteCmd(),
-		newDevtoolsStartCmd(),
 		newInstallCmd(),
-		newInstallBrowserCmd(),
 		newVideoStartCmd(),
 		newVideoStopCmd(),
 	)
@@ -644,365 +635,6 @@ func newListCmd() *cobra.Command {
 			}
 		},
 	}
-}
-
-func newDaemonCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:    "daemon",
-		Short:  "Daemon management",
-		Hidden: true,
-	}
-
-	cmd.AddCommand(
-		&cobra.Command{
-			Use:   "start",
-			Short: "Start daemon",
-			Run: func(cmd *cobra.Command, args []string) {
-				socketPath := client.DefaultSocketPath()
-				baseDir := client.DefaultBaseDir()
-
-				// Ensure directory exists
-				os.MkdirAll(filepath.Dir(socketPath), 0755)
-				os.MkdirAll(baseDir, 0755)
-
-				srv, err := daemon.NewServer(&daemon.Config{
-					SocketPath: socketPath,
-					BaseDir:    baseDir,
-				})
-				if err != nil {
-					fmt.Fprintln(os.Stderr, "Failed to create daemon:", err)
-					os.Exit(1)
-				}
-
-				if err := srv.Start(); err != nil {
-					fmt.Fprintln(os.Stderr, "Failed to start daemon:", err)
-					os.Exit(1)
-				}
-
-				fmt.Printf("Daemon started on %s\n", socketPath)
-				srv.WaitForShutdown()
-			},
-		},
-		&cobra.Command{
-			Use:   "stop",
-			Short: "Stop daemon",
-			Run: func(cmd *cobra.Command, args []string) {
-				if !cli.CanConnect() {
-					fmt.Println("Daemon is not running.")
-					return
-				}
-
-				// TODO: Implement proper shutdown via command
-				fmt.Println("Use 'sw close' to close the browser.")
-			},
-		},
-		&cobra.Command{
-			Use:   "status",
-			Short: "Check daemon status",
-			Run: func(cmd *cobra.Command, args []string) {
-				if cli.CanConnect() {
-					fmt.Println("Daemon is running.")
-				} else {
-					fmt.Println("Daemon is not running.")
-				}
-			},
-		},
-	)
-
-	return cmd
-}
-
-func newTabsCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "tabs",
-		Short: "Tab management",
-	}
-
-	cmd.AddCommand(
-		&cobra.Command{
-			Use:   "list",
-			Short: "List all tabs",
-			Run: func(cmd *cobra.Command, args []string) {
-				if err := ensureDaemon(); err != nil {
-					fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
-					os.Exit(1)
-				}
-
-				result, err := cli.Call("tabs-list", nil)
-				if err != nil {
-					fmt.Fprintln(os.Stderr, "Error:", err)
-					os.Exit(1)
-				}
-
-				fmt.Println("### Tabs")
-				fmt.Println(result)
-				},
-			},
-			&cobra.Command{
-				Use:   "new <url>",
-				Short: "Open new tab",
-				Args:  cobra.ExactArgs(1),
-				Run: func(cmd *cobra.Command, args []string) {
-					if err := ensureDaemon(); err != nil {
-						fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
-						os.Exit(1)
-					}
-
-					_, err := cli.Call("tabs-new", map[string]string{"url": args[0]})
-					if err != nil {
-						fmt.Fprintln(os.Stderr, "Error:", err)
-						os.Exit(1)
-					}
-
-					fmt.Println("Tab opened:", args[0])
-					},
-				},
-			&cobra.Command{
-				Use:   "close [index]",
-				Short: "Close tab",
-				Args:  cobra.MaximumNArgs(1),
-				Run: func(cmd *cobra.Command, args []string) {
-					if err := ensureDaemon(); err != nil {
-						fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
-						os.Exit(1)
-					}
-
-					index := -1
-					if len(args) > 0 {
-						fmt.Sscanf(args[0], "%d", &index)
-					}
-
-					_, err := cli.Call("tabs-close", map[string]int{"index": index})
-					if err != nil {
-						fmt.Fprintln(os.Stderr, "Error:", err)
-						os.Exit(1)
-					}
-
-					fmt.Println("Tab closed.")
-					},
-				},
-			&cobra.Command{
-				Use:   "switch <index>",
-				Short: "Switch to tab",
-				Args:  cobra.ExactArgs(1),
-				Run: func(cmd *cobra.Command, args []string) {
-					if err := ensureDaemon(); err != nil {
-						fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
-						os.Exit(1)
-					}
-
-					var index int
-					fmt.Sscanf(args[0], "%d", &index)
-
-					_, err := cli.Call("tabs-switch", map[string]int{"index": index})
-					if err != nil {
-						fmt.Fprintln(os.Stderr, "Error:", err)
-						os.Exit(1)
-					}
-
-					fmt.Println("Switched to tab", index)
-					},
-				},
-		)
-
-	return cmd
-}
-
-func newStorageCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "storage",
-		Short: "Storage management",
-	}
-
-	cmd.AddCommand(
-		&cobra.Command{
-			Use:   "get <key>",
-			Short: "Get storage value",
-			Args:  cobra.ExactArgs(1),
-			Run: func(cmd *cobra.Command, args []string) {
-				if err := ensureDaemon(); err != nil {
-					fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
-					os.Exit(1)
-				}
-
-				localStorage, _ := cmd.Flags().GetBool("local")
-				storageType := "session"
-				if localStorage {
-					storageType = "local"
-					}
-
-				result, err := cli.Call("storage-get", map[string]string{"type": storageType, "key": args[0]})
-				if err != nil {
-					fmt.Fprintln(os.Stderr, "Error:", err)
-					os.Exit(1)
-				}
-
-				fmt.Println(result)
-				},
-			},
-			&cobra.Command{
-				Use:   "set <key> <value>",
-				Short: "Set storage value",
-				Args:  cobra.ExactArgs(2),
-				Run: func(cmd *cobra.Command, args []string) {
-					if err := ensureDaemon(); err != nil {
-						fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
-						os.Exit(1)
-					}
-
-					localStorage, _ := cmd.Flags().GetBool("local")
-					storageType := "session"
-					if localStorage {
-						storageType = "local"
-					}
-
-					_, err := cli.Call("storage-set", map[string]string{"type": storageType, "key": args[0], "value": args[1]})
-					if err != nil {
-						fmt.Fprintln(os.Stderr, "Error:", err)
-						os.Exit(1)
-					}
-
-					fmt.Printf("Set %s = %s\n", args[0], args[1])
-					},
-				},
-			&cobra.Command{
-				Use:   "clear",
-				Short: "Clear storage",
-				Run: func(cmd *cobra.Command, args []string) {
-					if err := ensureDaemon(); err != nil {
-						fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
-						os.Exit(1)
-					}
-
-					localStorage, _ := cmd.Flags().GetBool("local")
-					storageType := "session"
-					if localStorage {
-						storageType = "local"
-					}
-
-					_, err := cli.Call("storage-clear", map[string]string{"type": storageType})
-					if err != nil {
-						fmt.Fprintln(os.Stderr, "Error:", err)
-						os.Exit(1)
-					}
-
-					fmt.Println("Storage cleared.")
-					},
-				},
-		)
-
-	// Add --local flag to storage commands
-	for _, subCmd := range cmd.Commands() {
-		subCmd.Flags().BoolP("local", "l", false, "Use localStorage instead of sessionStorage")
-		}
-
-	return cmd
-}
-
-func newCookiesCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "cookies",
-		Short: "Cookie management",
-	}
-
-	cmd.AddCommand(
-		&cobra.Command{
-			Use:   "list",
-			Short: "List all cookies",
-			Run: func(cmd *cobra.Command, args []string) {
-				if err := ensureDaemon(); err != nil {
-					fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
-					os.Exit(1)
-				}
-
-				result, err := cli.Call("cookies-list", nil)
-				if err != nil {
-					fmt.Fprintln(os.Stderr, "Error:", err)
-					os.Exit(1)
-				}
-
-				fmt.Println("### Cookies")
-				fmt.Println(result)
-				},
-			},
-			&cobra.Command{
-				Use:   "get <name>",
-				Short: "Get cookie",
-				Args:  cobra.ExactArgs(1),
-				Run: func(cmd *cobra.Command, args []string) {
-					if err := ensureDaemon(); err != nil {
-						fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
-						os.Exit(1)
-					}
-
-					result, err := cli.Call("cookies-get", map[string]string{"name": args[0]})
-					if err != nil {
-						fmt.Fprintln(os.Stderr, "Error:", err)
-						os.Exit(1)
-					}
-
-					fmt.Println(result)
-					},
-				},
-			&cobra.Command{
-				Use:   "set <name> <value>",
-				Short: "Set cookie",
-				Args:  cobra.ExactArgs(2),
-				Run: func(cmd *cobra.Command, args []string) {
-					if err := ensureDaemon(); err != nil {
-						fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
-						os.Exit(1)
-					}
-
-					_, err := cli.Call("cookies-set", map[string]string{"name": args[0], "value": args[1]})
-					if err != nil {
-						fmt.Fprintln(os.Stderr, "Error:", err)
-						os.Exit(1)
-					}
-
-					fmt.Printf("Cookie set: %s = %s\n", args[0], args[1])
-					},
-				},
-			&cobra.Command{
-				Use:   "delete <name>",
-				Short: "Delete cookie",
-				Args:  cobra.ExactArgs(1),
-				Run: func(cmd *cobra.Command, args []string) {
-					if err := ensureDaemon(); err != nil {
-						fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
-						os.Exit(1)
-					}
-
-					_, err := cli.Call("cookies-delete", map[string]string{"name": args[0]})
-					if err != nil {
-						fmt.Fprintln(os.Stderr, "Error:", err)
-						os.Exit(1)
-					}
-
-					fmt.Println("Cookie deleted:", args[0])
-					},
-				},
-			&cobra.Command{
-				Use:   "clear",
-				Short: "Clear all cookies",
-				Run: func(cmd *cobra.Command, args []string) {
-					if err := ensureDaemon(); err != nil {
-						fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
-						os.Exit(1)
-					}
-
-					_, err := cli.Call("cookies-clear", nil)
-					if err != nil {
-						fmt.Fprintln(os.Stderr, "Error:", err)
-						os.Exit(1)
-					}
-
-					fmt.Println("All cookies cleared.")
-					},
-				},
-	)
-
-	return cmd
 }
 
 func newDblClickCmd() *cobra.Command {
@@ -2190,32 +1822,6 @@ func newShowCmd() *cobra.Command {
 	}
 }
 
-func newConfigPrintCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "config-print",
-		Short: "Print current session configuration",
-		Args:  cobra.NoArgs,
-		Run: func(cmd *cobra.Command, args []string) {
-			if err := ensureDaemon(); err != nil {
-				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
-				os.Exit(1)
-			}
-			resp, err := cli.Call("config-print", nil)
-			if err != nil {
-				fmt.Fprintln(os.Stderr, "Error:", err)
-				os.Exit(1)
-			}
-			if resp.Error != nil {
-				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
-				os.Exit(1)
-			}
-			var cmdResult protocol.CommandResult
-			json.Unmarshal(resp.Result, &cmdResult)
-			fmt.Println(cmdResult.Message)
-		},
-	}
-}
-
 func newRunCodeCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "run-code <code>",
@@ -2486,34 +2092,6 @@ func newUnrouteCmd() *cobra.Command {
 	}
 }
 
-func newDevtoolsStartCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "devtools-start",
-		Short: "Show browser DevTools",
-		Run: func(cmd *cobra.Command, args []string) {
-			if err := ensureDaemon(); err != nil {
-				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
-				os.Exit(1)
-			}
-			resp, err := cli.Call("devtools-start", nil)
-			if err != nil {
-				fmt.Fprintln(os.Stderr, "Error:", err)
-				os.Exit(1)
-			}
-			if resp.Error != nil {
-				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
-				os.Exit(1)
-			}
-			var result protocol.CommandResult
-			if err := json.Unmarshal(resp.Result, &result); err != nil {
-				fmt.Fprintln(os.Stderr, "Error:", err)
-				os.Exit(1)
-			}
-			printResult(&result)
-		},
-	}
-}
-
 func newInstallCmd() *cobra.Command {
 	var skills bool
 	cmd := &cobra.Command{
@@ -2532,23 +2110,6 @@ func newInstallCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&skills, "skills", false, "install skills for claude / github copilot")
-	return cmd
-}
-
-func newInstallBrowserCmd() *cobra.Command {
-	var browser string
-	cmd := &cobra.Command{
-		Use:   "install-browser",
-		Short: "Install browser",
-		Run: func(cmd *cobra.Command, args []string) {
-			if browser == "" {
-				browser = "chromium"
-			}
-			fmt.Printf("Installing %s browser...\n", browser)
-			fmt.Println("Run: npx playwright install " + browser)
-		},
-	}
-	cmd.Flags().StringVar(&browser, "browser", "", "browser or chrome channel to use (chrome, firefox, webkit, msedge)")
 	return cmd
 }
 

@@ -108,7 +108,6 @@ func (s *Server) registerCommands() {
 	s.commands.Register("delete-data", s.cmdDeleteData)
 	s.commands.Register("run-code", s.cmdRunCode)
 	s.commands.Register("show", s.cmdShow)
-	s.commands.Register("config-print", s.cmdConfigPrint)
 	s.commands.Register("console", s.cmdConsole)
 	s.commands.Register("network", s.cmdNetwork)
 	s.commands.Register("tracing-start", s.cmdTracingStart)
@@ -116,7 +115,6 @@ func (s *Server) registerCommands() {
 	s.commands.Register("route", s.cmdRoute)
 	s.commands.Register("route-list", s.cmdRouteList)
 	s.commands.Register("unroute", s.cmdUnroute)
-	s.commands.Register("devtools-start", s.cmdDevtoolsStart)
 	s.commands.Register("video-start", s.cmdVideoStart)
 	s.commands.Register("video-stop", s.cmdVideoStop)
 }
@@ -1564,24 +1562,6 @@ func (s *Server) cmdShow(params json.RawMessage) (interface{}, error) {
 	return &protocol.CommandResult{Success: true, Message: "window brought to front"}, nil
 }
 
-// cmdConfigPrint prints the current session configuration.
-func (s *Server) cmdConfigPrint(params json.RawMessage) (interface{}, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	if s.currentSession == nil {
-		return &protocol.CommandResult{Success: true, Message: "no active session"}, nil
-	}
-
-	cfg := s.currentSession.Config
-	data, err := json.Marshal(cfg)
-	if err != nil {
-		return nil, err
-	}
-
-	return &protocol.CommandResult{Success: true, Message: string(data)}, nil
-}
-
 // Console command
 
 func (s *Server) cmdConsole(params json.RawMessage) (interface{}, error) {
@@ -1815,20 +1795,6 @@ func (s *Server) cmdUnroute(params json.RawMessage) (interface{}, error) {
 	s.mu.Unlock()
 
 	return &protocol.CommandResult{Success: true, Message: fmt.Sprintf("route removed: %s", p.Pattern)}, nil
-}
-
-// cmdDevtoolsStart opens the browser DevTools by pressing F12.
-func (s *Server) cmdDevtoolsStart(params json.RawMessage) (interface{}, error) {
-	inst, err := s.requireSession()
-	if err != nil {
-		return nil, err
-	}
-
-	if err := inst.Page.Press("body", "F12"); err != nil {
-		return nil, err
-	}
-
-	return &protocol.CommandResult{Success: true, Message: "DevTools opened"}, nil
 }
 
 // cmdVideoStart stubs video recording start.
