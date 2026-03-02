@@ -377,7 +377,7 @@ func (c *Client) List() ([]string, error) {
 func DefaultSocketPath() string {
 	// Use hash of current directory for isolation
 	cwd, _ := os.Getwd()
-	hash := fmt.Sprintf("%x", len(cwd))[:8]
+	hash := fmt.Sprintf("%08x", len(cwd))
 	return filepath.Join(os.TempDir(), "sw", hash, "default.sock")
 }
 
