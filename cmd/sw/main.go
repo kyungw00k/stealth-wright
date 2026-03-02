@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	"github.com/kyungw00k/sw/internal/client"
 	"github.com/kyungw00k/sw/internal/daemon"
 	"github.com/kyungw00k/sw/pkg/protocol"
-	"github.com/spf13/cobra"
-)
+	"github.com/spf13/cobra")
 
 var (
 	// Global options
@@ -72,6 +72,27 @@ undetected browser automation.`,
 		newTabsCmd(),
 		newStorageCmd(),
 		newCookiesCmd(),
+		newDblClickCmd(),
+		newUncheckCmd(),
+		newDragCmd(),
+		newSelectCmd(),
+		newEvalCmd(),
+		newResizeCmd(),
+		newUploadCmd(),
+		newKeyDownCmd(),
+		newKeyUpCmd(),
+		newMouseMoveCmd(),
+		newMouseDownCmd(),
+		newMouseUpCmd(),
+		newDialogAcceptCmd(),
+		newDialogDismissCmd(),
+		newTabNewCmd(),
+		newTabCloseCmd(),
+		newTabSelectCmd(),
+		newTabListCmd(),
+		newStateSaveCmd(),
+		newStateLoadCmd(),
+		newKillAllCmd(),
 		newDaemonCmd(),
 	)
 
@@ -151,7 +172,11 @@ func newOpenCmd() *cobra.Command {
 				url = args[0]
 			}
 
-			result, err := cli.Open(url)
+			result, err := cli.Open(url,
+				client.WithHeaded(headed),
+				client.WithBrowser(browserType),
+				client.WithStealth(stealthMode),
+			)
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "Error:", err)
 				os.Exit(1)
@@ -498,7 +523,10 @@ func newListCmd() *cobra.Command {
 
 			fmt.Println("### Sessions")
 			for _, s := range sessions {
-				fmt.Printf("- %s\n", s)
+				fmt.Printf("- %s:\n", s.Name)
+				fmt.Printf("  URL: %s\n", s.URL)
+				fmt.Printf("  Title: %s\n", s.Title)
+				fmt.Printf("  Browser: %s\n", s.Browser)
 			}
 		},
 	}
@@ -857,7 +885,609 @@ func newCookiesCmd() *cobra.Command {
 					fmt.Println("All cookies cleared.")
 					},
 				},
-		)
+	)
 
 	return cmd
+}
+
+func newDblClickCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "dblclick <ref>",
+		Short: "Double-click element",
+		Args:  cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensureDaemon(); err != nil {
+				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
+				os.Exit(1)
+			}
+
+			resp, err := cli.Call("dblclick", map[string]string{"ref": args[0]})
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
+
+			fmt.Println("Double-clicked", args[0])
+		},
+	}
+}
+
+func newUncheckCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "uncheck <ref>",
+		Short: "Uncheck checkbox or radio button",
+		Args:  cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensureDaemon(); err != nil {
+				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
+				os.Exit(1)
+			}
+
+			resp, err := cli.Call("uncheck", map[string]string{"ref": args[0]})
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
+
+			fmt.Println("Unchecked", args[0])
+		},
+	}
+}
+
+func newDragCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "drag <startRef> <endRef>",
+		Short: "Drag and drop between elements",
+		Args:  cobra.ExactArgs(2),
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensureDaemon(); err != nil {
+				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
+				os.Exit(1)
+			}
+
+			resp, err := cli.Call("drag", map[string]string{"startRef": args[0], "endRef": args[1]})
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
+
+			fmt.Printf("Dragged from %s to %s\n", args[0], args[1])
+		},
+	}
+}
+
+func newSelectCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "select <ref> <value>",
+		Short: "Select option in dropdown",
+		Args:  cobra.MinimumNArgs(2),
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensureDaemon(); err != nil {
+				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
+				os.Exit(1)
+			}
+
+			resp, err := cli.Call("select", map[string]interface{}{"ref": args[0], "values": args[1:]})
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
+
+			fmt.Println("Selected", args[1:], "in", args[0])
+		},
+	}
+}
+
+func newEvalCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "eval <script>",
+		Short: "Evaluate JavaScript",
+		Args:  cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensureDaemon(); err != nil {
+				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
+				os.Exit(1)
+			}
+
+			resp, err := cli.Call("eval", map[string]string{"script": args[0]})
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
+
+			var result protocol.CommandResult
+			json.Unmarshal(resp.Result, &result)
+			fmt.Println(result.Message)
+		},
+	}
+}
+
+func newResizeCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "resize <width> <height>",
+		Short: "Resize browser window",
+		Args:  cobra.ExactArgs(2),
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensureDaemon(); err != nil {
+				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
+				os.Exit(1)
+			}
+
+			width, _ := strconv.Atoi(args[0])
+			height, _ := strconv.Atoi(args[1])
+
+			resp, err := cli.Call("resize", map[string]int{"width": width, "height": height})
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
+
+			fmt.Printf("Resized to %sx%s\n", args[0], args[1])
+		},
+	}
+}
+
+func newUploadCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "upload <file...>",
+		Short: "Upload files",
+		Args:  cobra.MinimumNArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensureDaemon(); err != nil {
+				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
+				os.Exit(1)
+			}
+
+			resp, err := cli.Call("upload", map[string]interface{}{"files": args})
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
+
+			fmt.Println("Uploaded", args)
+		},
+	}
+}
+
+func newKeyDownCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "keydown <key>",
+		Short: "Press key down",
+		Args:  cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensureDaemon(); err != nil {
+				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
+				os.Exit(1)
+			}
+
+			resp, err := cli.Call("keydown", map[string]string{"key": args[0]})
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
+
+			fmt.Println("Key down:", args[0])
+		},
+	}
+}
+
+func newKeyUpCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "keyup <key>",
+		Short: "Release key",
+		Args:  cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensureDaemon(); err != nil {
+				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
+				os.Exit(1)
+			}
+
+			resp, err := cli.Call("keyup", map[string]string{"key": args[0]})
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
+
+			fmt.Println("Key up:", args[0])
+		},
+	}
+}
+
+func newMouseMoveCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "mousemove <x> <y>",
+		Short: "Move mouse to position",
+		Args:  cobra.ExactArgs(2),
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensureDaemon(); err != nil {
+				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
+				os.Exit(1)
+			}
+
+			x, _ := strconv.Atoi(args[0])
+			y, _ := strconv.Atoi(args[1])
+
+			resp, err := cli.Call("mousemove", map[string]int{"x": x, "y": y})
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
+
+			fmt.Printf("Mouse moved to %s,%s\n", args[0], args[1])
+		},
+	}
+}
+
+func newMouseDownCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "mousedown [button]",
+		Short: "Press mouse button down",
+		Args:  cobra.MaximumNArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensureDaemon(); err != nil {
+				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
+				os.Exit(1)
+			}
+
+			button := "left"
+			if len(args) > 0 {
+				button = args[0]
+			}
+
+			resp, err := cli.Call("mousedown", map[string]string{"button": button})
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
+
+			fmt.Println("Mouse down:", button)
+		},
+	}
+}
+
+func newMouseUpCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "mouseup [button]",
+		Short: "Release mouse button",
+		Args:  cobra.MaximumNArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensureDaemon(); err != nil {
+				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
+				os.Exit(1)
+			}
+
+			button := "left"
+			if len(args) > 0 {
+				button = args[0]
+			}
+
+			resp, err := cli.Call("mouseup", map[string]string{"button": button})
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
+
+			fmt.Println("Mouse up:", button)
+		},
+	}
+}
+
+func newDialogAcceptCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "dialog-accept [promptText]",
+		Short: "Accept dialog",
+		Args:  cobra.MaximumNArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensureDaemon(); err != nil {
+				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
+				os.Exit(1)
+			}
+
+			promptText := ""
+			if len(args) > 0 {
+				promptText = args[0]
+			}
+
+			resp, err := cli.Call("dialog-accept", map[string]string{"promptText": promptText})
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
+
+			fmt.Println("Dialog accept configured")
+		},
+	}
+}
+
+func newDialogDismissCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "dialog-dismiss",
+		Short: "Dismiss dialog",
+		Args:  cobra.NoArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensureDaemon(); err != nil {
+				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
+				os.Exit(1)
+			}
+
+			resp, err := cli.Call("dialog-dismiss", nil)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
+
+			fmt.Println("Dialog dismiss configured")
+		},
+	}
+}
+
+func newTabNewCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "tab-new [url]",
+		Short: "Open new tab",
+		Args:  cobra.MaximumNArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensureDaemon(); err != nil {
+				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
+				os.Exit(1)
+			}
+
+			url := ""
+			if len(args) > 0 {
+				url = args[0]
+			}
+
+			resp, err := cli.Call("tab-new", map[string]string{"url": url})
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
+
+			fmt.Println("New tab opened")
+		},
+	}
+}
+
+func newTabCloseCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "tab-close [index]",
+		Short: "Close tab",
+		Args:  cobra.MaximumNArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensureDaemon(); err != nil {
+				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
+				os.Exit(1)
+			}
+
+			index := 0
+			if len(args) > 0 {
+				index, _ = strconv.Atoi(args[0])
+			}
+
+			resp, err := cli.Call("tab-close", map[string]int{"index": index})
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
+
+			fmt.Println("Tab closed")
+		},
+	}
+}
+
+func newTabSelectCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "tab-select <index>",
+		Short: "Select tab by index",
+		Args:  cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensureDaemon(); err != nil {
+				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
+				os.Exit(1)
+			}
+
+			index, _ := strconv.Atoi(args[0])
+
+			resp, err := cli.Call("tab-select", map[string]int{"index": index})
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
+
+			fmt.Println("Tab selected:", args[0])
+		},
+	}
+}
+
+func newTabListCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "tab-list",
+		Short: "List all tabs",
+		Args:  cobra.NoArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensureDaemon(); err != nil {
+				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
+				os.Exit(1)
+			}
+
+			resp, err := cli.Call("tab-list", nil)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
+
+			fmt.Println(string(resp.Result))
+		},
+	}
+}
+
+func newStateSaveCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "state-save [filename]",
+		Short: "Save browser state",
+		Args:  cobra.MaximumNArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensureDaemon(); err != nil {
+				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
+				os.Exit(1)
+			}
+
+			filename := ""
+			if len(args) > 0 {
+				filename = args[0]
+			}
+
+			resp, err := cli.Call("state-save", map[string]string{"filename": filename})
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
+
+			fmt.Println("State saved")
+		},
+	}
+}
+
+func newStateLoadCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "state-load <filename>",
+		Short: "Load browser state",
+		Args:  cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensureDaemon(); err != nil {
+				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
+				os.Exit(1)
+			}
+
+			resp, err := cli.Call("state-load", map[string]string{"filename": args[0]})
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
+
+			fmt.Println("State loaded from", args[0])
+		},
+	}
+}
+
+func newKillAllCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "kill-all",
+		Short: "Kill all browser processes",
+		Args:  cobra.NoArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			resp, err := cli.Call("kill-all", nil)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
+
+			fmt.Println("All browser processes killed")
+		},
+	}
 }

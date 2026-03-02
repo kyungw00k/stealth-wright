@@ -38,7 +38,7 @@ jobs:
           name: sw-linux-go${{ matrix.go-version }}
           path: bin/sw
 
-  test:
+  test-unit:
     runs-on: ubuntu-latest
     needs: build
 
@@ -53,22 +53,59 @@ jobs:
       - name: Install gotestsum
         run: go install gotest.tools/gotestsum@latest
 
-      - name: Install Playwright browsers
-        run: go run github.com/playwright-community/playwright-go/cmd/playwright@v0.5700.1 install --with-deps chromium
-
-      - name: Run Tests
+      - name: Run Unit Tests
         run: gotestsum --junitfile junit/test-results.xml -- ./... -v -timeout 120s
 
       - name: Upload Test Results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-results
+          name: unit-test-results
+          path: junit/*.xml
+
+  test-integration:
+    runs-on: ubuntu-latest
+    needs: build
+    
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Download Binary
+        uses: actions/download-artifact@v4
+        with:
+          name: sw-linux-go1.23
+          path: bin
+
+      - name: Make Binary Executable
+        run: chmod +x bin/sw
+
+      - name: Install Playwright browsers
+        run: go run github.com/playwright-community/playwright-go/cmd/playwright@v0.5700.1 install --with-deps chromium
+
+      - name: Install gotestsum
+        run: go install gotest.tools/gotestsum@latest
+
+      - name: Run Integration Tests
+        env:
+          SW_BINARY: ${{ github.workspace }}/bin/sw
+          CI: true
+        run: gotestsum --junitfile junit/integration-results.xml -- ./test/ -v -tags=integration -timeout 300s
+
+      - name: Upload Integration Test Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-test-results
           path: junit/*.xml
 
   report:
     runs-on: ubuntu-latest
-    needs: [build, test]
+    needs: [build, test-unit, test-integration]
     if: always()
 
     steps:

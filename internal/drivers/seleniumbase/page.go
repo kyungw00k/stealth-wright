@@ -87,11 +87,19 @@ func (p *Page) Hover(selector string) error {
 
 // Type types text into an element.
 func (p *Page) Type(selector, text string, opts ...browser.TypeOption) error {
+	// If selector is "body" or empty, type into focused element using keyboard
+	if selector == "body" || selector == "" {
+		return p.pwPage.Keyboard().Type(text)
+	}
 	return p.pwPage.Fill(selector, text)
 }
 
 // Press presses a key on an element.
 func (p *Page) Press(selector, key string) error {
+	// If selector is "body" or empty, press globally using keyboard
+	if selector == "body" || selector == "" {
+		return p.pwPage.Keyboard().Press(key)
+	}
 	return p.pwPage.Press(selector, key)
 }
 

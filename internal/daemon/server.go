@@ -28,7 +28,7 @@ type Server struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 	wg         sync.WaitGroup
-	mu         sync.Mutex
+	mu         sync.RWMutex
 	// Current session/page state
 	currentSession  *session.Instance
 	currentSnapshot *protocol.SnapshotResult

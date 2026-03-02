@@ -182,8 +182,17 @@ func (c *Client) StartDaemon(daemonPath string) error {
 // Convenience methods for common commands
 
 // Open opens a browser session.
-func (c *Client) Open(url string) (*protocol.CommandResult, error) {
-	params := &protocol.OpenParams{URL: url}
+func (c *Client) Open(url string, opts ...OpenOption) (*protocol.CommandResult, error) {
+	params := &protocol.OpenParams{
+		URL:     url,
+		Browser: "chromium",
+		Headed:  true,
+		Stealth: true,
+	}
+	for _, opt := range opts {
+		opt(params)
+	}
+
 	resp, err := c.Call("open", params)
 	if err != nil {
 		return nil, err
@@ -199,6 +208,30 @@ func (c *Client) Open(url string) (*protocol.CommandResult, error) {
 	}
 
 	return &result, nil
+}
+
+// OpenOption is an option for Open.
+type OpenOption func(*protocol.OpenParams)
+
+// WithHeaded sets headed mode.
+func WithHeaded(headed bool) OpenOption {
+	return func(p *protocol.OpenParams) {
+		p.Headed = headed
+	}
+}
+
+// WithBrowser sets the browser type.
+func WithBrowser(browser string) OpenOption {
+	return func(p *protocol.OpenParams) {
+		p.Browser = browser
+	}
+}
+
+// WithStealth sets stealth mode.
+func WithStealth(stealth bool) OpenOption {
+	return func(p *protocol.OpenParams) {
+		p.Stealth = stealth
+	}
 }
 
 // CloseSession closes the browser session.
@@ -379,7 +412,7 @@ func (c *Client) Screenshot() (*protocol.CommandResult, error) {
 }
 
 // List lists sessions.
-func (c *Client) List() ([]string, error) {
+func (c *Client) List() ([]SessionInfo, error) {
 	resp, err := c.Call("list", nil)
 	if err != nil {
 		return nil, err
@@ -389,12 +422,23 @@ func (c *Client) List() ([]string, error) {
 		return nil, fmt.Errorf("%s", resp.Error.Message)
 	}
 
-	var result []string
+	var result []SessionInfo
 	if err := json.Unmarshal(resp.Result, &result); err != nil {
 		return nil, err
 	}
 
 	return result, nil
+}
+
+// SessionInfo represents session information.
+type SessionInfo struct {
+	Name       string `json:"name"`
+	Status     string `json:"status"`
+	URL        string `json:"url,omitempty"`
+	Title      string `json:"title,omitempty"`
+	Browser    string `json:"browser"`
+	Headed     bool   `json:"headed"`
+	Persistent bool   `json:"persistent"`
 }
 
 // DefaultSocketPath returns the default socket path.

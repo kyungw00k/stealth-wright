@@ -74,7 +74,10 @@ func NewErrorResponse(id int64, code int, message string) *Response {
 
 // OpenParams represents parameters for the open command.
 type OpenParams struct {
-	URL string `json:"url,omitempty"`
+	URL     string `json:"url,omitempty"`
+	Browser string `json:"browser,omitempty"`
+	Headed  bool   `json:"headed,omitempty"`
+	Stealth bool   `json:"stealth,omitempty"`
 }
 
 // GotoParams represents parameters for the goto command.
@@ -110,11 +113,77 @@ type HoverParams struct {
 	Ref string `json:"ref"`
 }
 
+
 // ScreenshotParams represents parameters for the screenshot command.
 type ScreenshotParams struct {
 	Ref      string `json:"ref,omitempty"`
 	Filename string `json:"filename,omitempty"`
 	FullPage bool   `json:"fullPage,omitempty"`
+}
+
+// DragParams represents parameters for the drag command.
+type DragParams struct {
+	StartRef string `json:"startRef"`
+	EndRef   string `json:"endRef"`
+}
+
+// SelectParams represents parameters for the select command.
+type SelectParams struct {
+	Ref    string `json:"ref"`
+	Values []string `json:"values"`
+}
+
+// UploadParams represents parameters for the upload command.
+type UploadParams struct {
+	Files []string `json:"files"`
+}
+
+// ResizeParams represents parameters for the resize command.
+type ResizeParams struct {
+	Width  int `json:"width"`
+	Height int `json:"height"`
+}
+
+// EvalParams represents parameters for the eval command.
+type EvalParams struct {
+	Script string `json:"script"`
+	Ref    string `json:"ref,omitempty"`
+}
+
+// KeyParams represents parameters for key commands.
+type KeyParams struct {
+	Key string `json:"key"`
+}
+
+// MouseParams represents parameters for mouse commands.
+type MouseParams struct {
+	X      int    `json:"x,omitempty"`
+	Y      int    `json:"y,omitempty"`
+	Button string `json:"button,omitempty"`
+	Dx     int    `json:"dx,omitempty"`
+	Dy     int    `json:"dy,omitempty"`
+}
+
+// DialogParams represents parameters for dialog commands.
+type DialogParams struct {
+	PromptText string `json:"promptText,omitempty"`
+}
+
+// TabParams represents parameters for tab commands.
+type TabParams struct {
+	URL   string `json:"url,omitempty"`
+	Index int    `json:"index,omitempty"`
+}
+
+// StorageParams represents parameters for storage commands.
+type StorageParams struct {
+	Filename string `json:"filename,omitempty"`
+}
+
+// KeyValueParams represents parameters for key-value storage commands.
+type KeyValueParams struct {
+	Key   string `json:"key"`
+	Value string `json:"value,omitempty"`
 }
 
 // Result types
@@ -160,4 +229,40 @@ type CommandResult struct {
 	Page     *PageResult `json:"page,omitempty"`
 	Snapshot string      `json:"snapshot,omitempty"`
 	Message  string      `json:"message,omitempty"`
+	Data     any         `json:"data,omitempty"`
+}
+
+// EvalResult represents the result of eval command.
+type EvalResult struct {
+	Value any `json:"value"`
+}
+
+// TabResult represents tab information.
+type TabResult struct {
+	Index   int    `json:"index"`
+	URL     string `json:"url"`
+	Title   string `json:"title"`
+	Current bool   `json:"current"`
+}
+
+// TabsResult represents the result of tab-list command.
+type TabsResult struct {
+	Tabs []TabResult `json:"tabs"`
+}
+
+// CookieResult represents a cookie.
+type CookieResult struct {
+	Name     string `json:"name"`
+	Value    string `json:"value"`
+	Domain   string `json:"domain,omitempty"`
+	Path     string `json:"path,omitempty"`
+	Expires  int64  `json:"expires,omitempty"`
+	HTTPOnly bool   `json:"httpOnly"`
+	Secure   bool   `json:"secure"`
+}
+
+// StorageEntryResult represents a storage entry.
+type StorageEntryResult struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
 }

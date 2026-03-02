@@ -6,7 +6,6 @@ import (
 
 	"github.com/kyungw00k/seleniumbase-go/sb"
 	"github.com/kyungw00k/sw/internal/browser"
-	"github.com/kyungw00k/sw/internal/browserutil"
 )
 
 // Driver implements browser.Browser using seleniumbase-go.
@@ -36,13 +35,7 @@ func NewDriver(opts ...Option) (browser.Browser, error) {
 		o(cfg)
 	}
 
-	// Ensure browser is available (auto-install if needed)
-	actualBrowser, err := browserutil.EnsureBrowser(cfg.Browser)
-	if err != nil {
-		return nil, fmt.Errorf("failed to ensure browser: %w", err)
-	}
-	cfg.Browser = actualBrowser
-
+	// seleniumbase-go handles browser/driver installation internally
 	sbOpts := cfg.toSBOptions()
 
 	page, cleanup, err := sb.NewPage(sbOpts...)
