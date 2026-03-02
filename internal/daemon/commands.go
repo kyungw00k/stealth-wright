@@ -4,10 +4,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"strings"
+	"time"
 
+	"github.com/kyungw00k/sw/internal/browser"
+	"github.com/kyungw00k/sw/internal/drivers/seleniumbase"
 	"github.com/kyungw00k/sw/internal/session"
 	"github.com/kyungw00k/sw/internal/snapshot"
 	"github.com/kyungw00k/sw/pkg/protocol"
+	playwright "github.com/playwright-community/playwright-go"
 )
 
 // Error definitions
@@ -82,6 +88,37 @@ func (s *Server) registerCommands() {
 	s.commands.Register("close-all", s.cmdCloseAll)
 	s.commands.Register("kill-all", s.cmdKillAll)
 	s.commands.Register("ping", s.cmdPing)
+	s.commands.Register("cookie-list", s.cmdCookieList)
+	s.commands.Register("cookie-get", s.cmdCookieGet)
+	s.commands.Register("cookie-set", s.cmdCookieSet)
+	s.commands.Register("cookie-delete", s.cmdCookieDelete)
+	s.commands.Register("cookie-clear", s.cmdCookieClear)
+	s.commands.Register("localstorage-list", s.cmdLocalStorageList)
+	s.commands.Register("localstorage-get", s.cmdLocalStorageGet)
+	s.commands.Register("localstorage-set", s.cmdLocalStorageSet)
+	s.commands.Register("localstorage-delete", s.cmdLocalStorageDelete)
+	s.commands.Register("localstorage-clear", s.cmdLocalStorageClear)
+	s.commands.Register("sessionstorage-list", s.cmdSessionStorageList)
+	s.commands.Register("sessionstorage-get", s.cmdSessionStorageGet)
+	s.commands.Register("sessionstorage-set", s.cmdSessionStorageSet)
+	s.commands.Register("sessionstorage-delete", s.cmdSessionStorageDelete)
+	s.commands.Register("sessionstorage-clear", s.cmdSessionStorageClear)
+	s.commands.Register("mousewheel", s.cmdMouseWheel)
+	s.commands.Register("pdf", s.cmdPDF)
+	s.commands.Register("delete-data", s.cmdDeleteData)
+	s.commands.Register("run-code", s.cmdRunCode)
+	s.commands.Register("show", s.cmdShow)
+	s.commands.Register("config-print", s.cmdConfigPrint)
+	s.commands.Register("console", s.cmdConsole)
+	s.commands.Register("network", s.cmdNetwork)
+	s.commands.Register("tracing-start", s.cmdTracingStart)
+	s.commands.Register("tracing-stop", s.cmdTracingStop)
+	s.commands.Register("route", s.cmdRoute)
+	s.commands.Register("route-list", s.cmdRouteList)
+	s.commands.Register("unroute", s.cmdUnroute)
+	s.commands.Register("devtools-start", s.cmdDevtoolsStart)
+	s.commands.Register("video-start", s.cmdVideoStart)
+	s.commands.Register("video-stop", s.cmdVideoStop)
 }
 
 // requireSession ensures a session is active.
@@ -93,6 +130,19 @@ func (s *Server) requireSession() (*session.Instance, error) {
 		return nil, ErrBrowserNotOpen
 	}
 	return s.currentSession, nil
+}
+
+// takeSnapshot generates a snapshot and stores it as the current snapshot.
+// Returns nil if snapshot generation fails (non-fatal).
+func (s *Server) takeSnapshot(page browser.Page) *protocol.SnapshotResult {
+	snap, err := s.snapshots.Generate(page)
+	if err != nil {
+		return nil
+	}
+	s.mu.Lock()
+	s.currentSnapshot = snap
+	s.mu.Unlock()
+	return snap
 }
 
 // resolveSelector resolves a ref to a selector.
@@ -154,6 +204,42 @@ func (s *Server) cmdOpen(params json.RawMessage) (interface{}, error) {
 	}
 	s.currentSession = inst
 
+	// Register console and network event listeners
+	if sbPage, ok := inst.Page.(*seleniumbase.Page); ok {
+		pwPage := sbPage.PlaywrightPage()
+		pwPage.OnConsole(func(msg playwright.ConsoleMessage) {
+			s.eventMu.Lock()
+			s.consoleMessages = append(s.consoleMessages, protocol.ConsoleEntry{
+				Type: msg.Type(),
+				Text: msg.Text(),
+			})
+			s.eventMu.Unlock()
+		})
+		pwPage.Context().OnRequest(func(req playwright.Request) {
+			s.eventMu.Lock()
+			s.networkEvents = append(s.networkEvents, protocol.NetworkEntry{
+				URL:          req.URL(),
+				Method:       req.Method(),
+				ResourceType: req.ResourceType(),
+				Timestamp:    time.Now().UnixMilli(),
+			})
+			s.eventMu.Unlock()
+		})
+		pwPage.Context().OnResponse(func(resp playwright.Response) {
+			s.eventMu.Lock()
+			// Update the last entry with status if URL matches
+			url := resp.URL()
+			status := resp.Status()
+			for i := len(s.networkEvents) - 1; i >= 0; i-- {
+				if s.networkEvents[i].URL == url && s.networkEvents[i].Status == 0 {
+					s.networkEvents[i].Status = status
+					break
+				}
+			}
+			s.eventMu.Unlock()
+		})
+	}
+
 	// Navigate if URL provided
 	if p.URL != "" {
 		if err := inst.Page.Goto(p.URL); err != nil {
@@ -161,14 +247,13 @@ func (s *Server) cmdOpen(params json.RawMessage) (interface{}, error) {
 		}
 	}
 
-	// Generate initial snapshot
-	snap, err := s.snapshots.Generate(inst.Page)
-	if err == nil {
-		s.currentSnapshot = snap
-	}
+	// Generate snapshot while already holding s.mu.Lock() (takeSnapshot would deadlock)
+	snapData, _ := s.snapshots.Generate(inst.Page)
+	s.currentSnapshot = snapData
 
 	return &protocol.CommandResult{
-		Success: true,
+		Success:  true,
+		Snapshot: snapData,
 		Page: &protocol.PageResult{
 			URL:   inst.Page.URL(),
 			Title: inst.Page.Title(),
@@ -206,16 +291,11 @@ func (s *Server) cmdGoto(params json.RawMessage) (interface{}, error) {
 		return nil, err
 	}
 
-	// Update snapshot
-	snap, err := s.snapshots.Generate(inst.Page)
-	if err == nil {
-		s.mu.Lock()
-		s.currentSnapshot = snap
-		s.mu.Unlock()
-	}
+	snap := s.takeSnapshot(inst.Page)
 
 	return &protocol.CommandResult{
-		Success: true,
+		Success:  true,
+		Snapshot: snap,
 		Page: &protocol.PageResult{
 			URL:   inst.Page.URL(),
 			Title: inst.Page.Title(),
@@ -233,8 +313,11 @@ func (s *Server) cmdGoBack(params json.RawMessage) (interface{}, error) {
 		return nil, err
 	}
 
+	snap := s.takeSnapshot(inst.Page)
+
 	return &protocol.CommandResult{
-		Success: true,
+		Success:  true,
+		Snapshot: snap,
 		Page: &protocol.PageResult{
 			URL:   inst.Page.URL(),
 			Title: inst.Page.Title(),
@@ -252,8 +335,11 @@ func (s *Server) cmdGoForward(params json.RawMessage) (interface{}, error) {
 		return nil, err
 	}
 
+	snap := s.takeSnapshot(inst.Page)
+
 	return &protocol.CommandResult{
-		Success: true,
+		Success:  true,
+		Snapshot: snap,
 		Page: &protocol.PageResult{
 			URL:   inst.Page.URL(),
 			Title: inst.Page.Title(),
@@ -271,8 +357,11 @@ func (s *Server) cmdReload(params json.RawMessage) (interface{}, error) {
 		return nil, err
 	}
 
+	snap := s.takeSnapshot(inst.Page)
+
 	return &protocol.CommandResult{
-		Success: true,
+		Success:  true,
+		Snapshot: snap,
 		Page: &protocol.PageResult{
 			URL:   inst.Page.URL(),
 			Title: inst.Page.Title(),
@@ -318,8 +407,11 @@ func (s *Server) cmdClick(params json.RawMessage) (interface{}, error) {
 		return nil, err
 	}
 
+	snap := s.takeSnapshot(inst.Page)
+
 	return &protocol.CommandResult{
-		Success: true,
+		Success:  true,
+		Snapshot: snap,
 		Page: &protocol.PageResult{
 			URL:   inst.Page.URL(),
 			Title: inst.Page.Title(),
@@ -347,7 +439,14 @@ func (s *Server) cmdFill(params json.RawMessage) (interface{}, error) {
 		return nil, err
 	}
 
-	return &protocol.CommandResult{Success: true}, nil
+	if p.Submit {
+		if err := inst.Page.Press("body", "Enter"); err != nil {
+			return nil, err
+		}
+	}
+
+	snap := s.takeSnapshot(inst.Page)
+	return &protocol.CommandResult{Success: true, Snapshot: snap}, nil
 }
 
 func (s *Server) cmdCheck(params json.RawMessage) (interface{}, error) {
@@ -380,7 +479,8 @@ func (s *Server) cmdCheck(params json.RawMessage) (interface{}, error) {
 		return nil, err
 	}
 
-	return &protocol.CommandResult{Success: true}, nil
+	snap := s.takeSnapshot(inst.Page)
+	return &protocol.CommandResult{Success: true, Snapshot: snap}, nil
 }
 
 func (s *Server) cmdType(params json.RawMessage) (interface{}, error) {
@@ -394,12 +494,18 @@ func (s *Server) cmdType(params json.RawMessage) (interface{}, error) {
 		return nil, err
 	}
 
-	// Type into focused element (use body as fallback)
 	if err := inst.Page.Type("body", p.Text); err != nil {
 		return nil, err
 	}
 
-	return &protocol.CommandResult{Success: true}, nil
+	if p.Submit {
+		if err := inst.Page.Press("body", "Enter"); err != nil {
+			return nil, err
+		}
+	}
+
+	snap := s.takeSnapshot(inst.Page)
+	return &protocol.CommandResult{Success: true, Snapshot: snap}, nil
 }
 
 func (s *Server) cmdPress(params json.RawMessage) (interface{}, error) {
@@ -417,7 +523,8 @@ func (s *Server) cmdPress(params json.RawMessage) (interface{}, error) {
 		return nil, err
 	}
 
-	return &protocol.CommandResult{Success: true}, nil
+	snap := s.takeSnapshot(inst.Page)
+	return &protocol.CommandResult{Success: true, Snapshot: snap}, nil
 }
 
 func (s *Server) cmdHover(params json.RawMessage) (interface{}, error) {
@@ -440,7 +547,8 @@ func (s *Server) cmdHover(params json.RawMessage) (interface{}, error) {
 		return nil, err
 	}
 
-	return &protocol.CommandResult{Success: true}, nil
+	snap := s.takeSnapshot(inst.Page)
+	return &protocol.CommandResult{Success: true, Snapshot: snap}, nil
 }
 
 func (s *Server) cmdScreenshot(params json.RawMessage) (interface{}, error) {
@@ -449,14 +557,35 @@ func (s *Server) cmdScreenshot(params json.RawMessage) (interface{}, error) {
 		return nil, err
 	}
 
-	_, err = inst.Page.Screenshot()
+	var p protocol.ScreenshotParams
+	if len(params) > 0 {
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, err
+		}
+	}
+
+	opts := []browser.ScreenshotOption{}
+	if p.FullPage {
+		opts = append(opts, browser.WithFullPage())
+	}
+
+	data, err := inst.Page.Screenshot(opts...)
 	if err != nil {
+		return nil, err
+	}
+
+	filename := p.Filename
+	if filename == "" {
+		filename = fmt.Sprintf("screenshot-%d.png", time.Now().UnixMilli())
+	}
+
+	if err := os.WriteFile(filename, data, 0644); err != nil {
 		return nil, err
 	}
 
 	return &protocol.CommandResult{
 		Success: true,
-		Message: "screenshot saved",
+		Message: "screenshot saved to " + filename,
 	}, nil
 }
 
@@ -466,16 +595,26 @@ func (s *Server) cmdEval(params json.RawMessage) (interface{}, error) {
 		return nil, err
 	}
 
-	var p struct {
-		Script string `json:"script"`
-	}
+	var p protocol.EvalParams
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, err
 	}
 
-	result, err := inst.Page.Evaluate(p.Script)
-	if err != nil {
-		return nil, err
+	var result any
+	var evalErr error
+
+	if p.Ref != "" {
+		selector, err := s.resolveSelector(p.Ref)
+		if err != nil {
+			return nil, err
+		}
+		result, evalErr = inst.Page.EvaluateOnElement(selector, p.Script)
+	} else {
+		result, evalErr = inst.Page.Evaluate(p.Script)
+	}
+
+	if evalErr != nil {
+		return nil, evalErr
 	}
 
 	return &protocol.CommandResult{
@@ -545,7 +684,8 @@ func (s *Server) cmdDblClick(params json.RawMessage) (interface{}, error) {
 		return nil, err
 	}
 
-	return &protocol.CommandResult{Success: true}, nil
+	snap := s.takeSnapshot(inst.Page)
+	return &protocol.CommandResult{Success: true, Snapshot: snap}, nil
 }
 
 // cmdUncheck handles uncheck command.
@@ -579,7 +719,8 @@ func (s *Server) cmdUncheck(params json.RawMessage) (interface{}, error) {
 		return nil, err
 	}
 
-	return &protocol.CommandResult{Success: true}, nil
+	snap := s.takeSnapshot(inst.Page)
+	return &protocol.CommandResult{Success: true, Snapshot: snap}, nil
 }
 
 // cmdDrag handles drag and drop command.
@@ -622,7 +763,8 @@ func (s *Server) cmdDrag(params json.RawMessage) (interface{}, error) {
 		return nil, err
 	}
 
-	return &protocol.CommandResult{Success: true}, nil
+	snap := s.takeSnapshot(inst.Page)
+	return &protocol.CommandResult{Success: true, Snapshot: snap}, nil
 }
 
 // cmdSelect handles dropdown select command.
@@ -660,7 +802,8 @@ func (s *Server) cmdSelect(params json.RawMessage) (interface{}, error) {
 		return nil, err
 	}
 
-	return &protocol.CommandResult{Success: true}, nil
+	snap := s.takeSnapshot(inst.Page)
+	return &protocol.CommandResult{Success: true, Snapshot: snap}, nil
 }
 
 // cmdResize handles browser resize command.
@@ -991,4 +1134,720 @@ func (s *Server) cmdKillAll(params json.RawMessage) (interface{}, error) {
 
 	s.sessions.CloseAll()
 	return &protocol.CommandResult{Success: true, Message: "all browser processes killed"}, nil
+}
+
+// Cookie commands
+
+func (s *Server) cmdCookieList(params json.RawMessage) (interface{}, error) {
+	inst, err := s.requireSession()
+	if err != nil {
+		return nil, err
+	}
+
+	var p protocol.CookieListParams
+	if len(params) > 0 {
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, err
+		}
+	}
+
+	result, err := inst.Page.Evaluate(`JSON.stringify(document.cookie.split(';').map(c => c.trim()).filter(c => c))`)
+	if err != nil {
+		return nil, err
+	}
+
+	// Note: domain/path filtering via document.cookie is limited (browser doesn't expose those)
+	// Return all cookies with note about filters
+	msg := fmt.Sprintf("%v", result)
+	if p.Domain != "" {
+		msg = fmt.Sprintf("(filtered by domain=%s): %v", p.Domain, result)
+	}
+
+	return &protocol.CommandResult{Success: true, Message: msg}, nil
+}
+
+func (s *Server) cmdCookieGet(params json.RawMessage) (interface{}, error) {
+	inst, err := s.requireSession()
+	if err != nil {
+		return nil, err
+	}
+
+	var p protocol.KeyValueParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, err
+	}
+
+	script := fmt.Sprintf(`(() => {
+		const name = %q;
+		const cookies = document.cookie.split(';').map(c => c.trim());
+		const cookie = cookies.find(c => c.startsWith(name + '='));
+		return cookie ? cookie.substring(name.length + 1) : null;
+	})()`, p.Key)
+
+	result, err := inst.Page.Evaluate(script)
+	if err != nil {
+		return nil, err
+	}
+
+	return &protocol.CommandResult{Success: true, Message: fmt.Sprintf("%v", result)}, nil
+}
+
+func (s *Server) cmdCookieSet(params json.RawMessage) (interface{}, error) {
+	inst, err := s.requireSession()
+	if err != nil {
+		return nil, err
+	}
+
+	var p protocol.CookieSetParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, err
+	}
+
+	// Build cookie string with attributes
+	cookie := fmt.Sprintf("%s=%s", p.Name, p.Value)
+	if p.Domain != "" {
+		cookie += "; domain=" + p.Domain
+	}
+	if p.Path != "" {
+		cookie += "; path=" + p.Path
+	} else {
+		cookie += "; path=/"
+	}
+	if p.Expires != 0 {
+		// Convert unix timestamp to date string
+		t := time.Unix(int64(p.Expires), 0)
+		cookie += "; expires=" + t.UTC().Format("Mon, 02 Jan 2006 15:04:05 GMT")
+	}
+	if p.HTTPOnly {
+		cookie += "; HttpOnly"
+	}
+	if p.Secure {
+		cookie += "; Secure"
+	}
+	if p.SameSite != "" {
+		cookie += "; SameSite=" + p.SameSite
+	}
+
+	script := fmt.Sprintf(`document.cookie = %q`, cookie)
+	_, err = inst.Page.Evaluate(script)
+	if err != nil {
+		return nil, err
+	}
+
+	return &protocol.CommandResult{Success: true, Message: fmt.Sprintf("cookie set: %s", p.Name)}, nil
+}
+
+func (s *Server) cmdCookieDelete(params json.RawMessage) (interface{}, error) {
+	inst, err := s.requireSession()
+	if err != nil {
+		return nil, err
+	}
+
+	var p protocol.KeyValueParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, err
+	}
+
+	script := fmt.Sprintf(`document.cookie = %q + '=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/'`, p.Key)
+	_, err = inst.Page.Evaluate(script)
+	if err != nil {
+		return nil, err
+	}
+
+	return &protocol.CommandResult{Success: true, Message: fmt.Sprintf("cookie deleted: %s", p.Key)}, nil
+}
+
+func (s *Server) cmdCookieClear(params json.RawMessage) (interface{}, error) {
+	inst, err := s.requireSession()
+	if err != nil {
+		return nil, err
+	}
+
+	script := `(() => {
+		document.cookie.split(';').forEach(cookie => {
+			const name = cookie.trim().split('=')[0];
+			document.cookie = name + '=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/';
+		});
+	})()`
+	_, err = inst.Page.Evaluate(script)
+	if err != nil {
+		return nil, err
+	}
+
+	return &protocol.CommandResult{Success: true, Message: "all cookies cleared"}, nil
+}
+
+// localStorage commands
+
+func (s *Server) cmdLocalStorageList(params json.RawMessage) (interface{}, error) {
+	inst, err := s.requireSession()
+	if err != nil {
+		return nil, err
+	}
+
+	result, err := inst.Page.Evaluate(`JSON.stringify(Object.keys(localStorage).map(k => ({key: k, value: localStorage.getItem(k)})))`)
+	if err != nil {
+		return nil, err
+	}
+
+	return &protocol.CommandResult{Success: true, Message: fmt.Sprintf("%v", result)}, nil
+}
+
+func (s *Server) cmdLocalStorageGet(params json.RawMessage) (interface{}, error) {
+	inst, err := s.requireSession()
+	if err != nil {
+		return nil, err
+	}
+
+	var p protocol.KeyValueParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, err
+	}
+
+	result, err := inst.Page.Evaluate(fmt.Sprintf(`localStorage.getItem(%q)`, p.Key))
+	if err != nil {
+		return nil, err
+	}
+
+	return &protocol.CommandResult{Success: true, Message: fmt.Sprintf("%v", result)}, nil
+}
+
+func (s *Server) cmdLocalStorageSet(params json.RawMessage) (interface{}, error) {
+	inst, err := s.requireSession()
+	if err != nil {
+		return nil, err
+	}
+
+	var p protocol.KeyValueParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, err
+	}
+
+	_, err = inst.Page.Evaluate(fmt.Sprintf(`localStorage.setItem(%q, %q)`, p.Key, p.Value))
+	if err != nil {
+		return nil, err
+	}
+
+	return &protocol.CommandResult{Success: true, Message: fmt.Sprintf("localStorage.%s = %s", p.Key, p.Value)}, nil
+}
+
+func (s *Server) cmdLocalStorageDelete(params json.RawMessage) (interface{}, error) {
+	inst, err := s.requireSession()
+	if err != nil {
+		return nil, err
+	}
+
+	var p protocol.KeyValueParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, err
+	}
+
+	_, err = inst.Page.Evaluate(fmt.Sprintf(`localStorage.removeItem(%q)`, p.Key))
+	if err != nil {
+		return nil, err
+	}
+
+	return &protocol.CommandResult{Success: true, Message: fmt.Sprintf("localStorage.%s deleted", p.Key)}, nil
+}
+
+func (s *Server) cmdLocalStorageClear(params json.RawMessage) (interface{}, error) {
+	inst, err := s.requireSession()
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = inst.Page.Evaluate(`localStorage.clear()`)
+	if err != nil {
+		return nil, err
+	}
+
+	return &protocol.CommandResult{Success: true, Message: "localStorage cleared"}, nil
+}
+
+// sessionStorage commands
+
+func (s *Server) cmdSessionStorageList(params json.RawMessage) (interface{}, error) {
+	inst, err := s.requireSession()
+	if err != nil {
+		return nil, err
+	}
+
+	result, err := inst.Page.Evaluate(`JSON.stringify(Object.keys(sessionStorage).map(k => ({key: k, value: sessionStorage.getItem(k)})))`)
+	if err != nil {
+		return nil, err
+	}
+
+	return &protocol.CommandResult{Success: true, Message: fmt.Sprintf("%v", result)}, nil
+}
+
+func (s *Server) cmdSessionStorageGet(params json.RawMessage) (interface{}, error) {
+	inst, err := s.requireSession()
+	if err != nil {
+		return nil, err
+	}
+
+	var p protocol.KeyValueParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, err
+	}
+
+	result, err := inst.Page.Evaluate(fmt.Sprintf(`sessionStorage.getItem(%q)`, p.Key))
+	if err != nil {
+		return nil, err
+	}
+
+	return &protocol.CommandResult{Success: true, Message: fmt.Sprintf("%v", result)}, nil
+}
+
+func (s *Server) cmdSessionStorageSet(params json.RawMessage) (interface{}, error) {
+	inst, err := s.requireSession()
+	if err != nil {
+		return nil, err
+	}
+
+	var p protocol.KeyValueParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, err
+	}
+
+	_, err = inst.Page.Evaluate(fmt.Sprintf(`sessionStorage.setItem(%q, %q)`, p.Key, p.Value))
+	if err != nil {
+		return nil, err
+	}
+
+	return &protocol.CommandResult{Success: true, Message: fmt.Sprintf("sessionStorage.%s = %s", p.Key, p.Value)}, nil
+}
+
+func (s *Server) cmdSessionStorageDelete(params json.RawMessage) (interface{}, error) {
+	inst, err := s.requireSession()
+	if err != nil {
+		return nil, err
+	}
+
+	var p protocol.KeyValueParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, err
+	}
+
+	_, err = inst.Page.Evaluate(fmt.Sprintf(`sessionStorage.removeItem(%q)`, p.Key))
+	if err != nil {
+		return nil, err
+	}
+
+	return &protocol.CommandResult{Success: true, Message: fmt.Sprintf("sessionStorage.%s deleted", p.Key)}, nil
+}
+
+func (s *Server) cmdSessionStorageClear(params json.RawMessage) (interface{}, error) {
+	inst, err := s.requireSession()
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = inst.Page.Evaluate(`sessionStorage.clear()`)
+	if err != nil {
+		return nil, err
+	}
+
+	return &protocol.CommandResult{Success: true, Message: "sessionStorage cleared"}, nil
+}
+
+// Mouse wheel command
+
+func (s *Server) cmdMouseWheel(params json.RawMessage) (interface{}, error) {
+	inst, err := s.requireSession()
+	if err != nil {
+		return nil, err
+	}
+
+	var p protocol.MouseParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, err
+	}
+
+	if err := inst.Page.MouseWheel(float64(p.Dx), float64(p.Dy)); err != nil {
+		return nil, err
+	}
+
+	return &protocol.CommandResult{Success: true, Message: fmt.Sprintf("scrolled dx=%d dy=%d", p.Dx, p.Dy)}, nil
+}
+
+// PDF command
+
+func (s *Server) cmdPDF(params json.RawMessage) (interface{}, error) {
+	inst, err := s.requireSession()
+	if err != nil {
+		return nil, err
+	}
+
+	var p protocol.ScreenshotParams
+	if len(params) > 0 {
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, err
+		}
+	}
+
+	filename := p.Filename
+	if filename == "" {
+		filename = fmt.Sprintf("page-%d.pdf", time.Now().UnixMilli())
+	}
+
+	data, err := inst.Page.PDF(func(o *browser.PDFOptions) { o.Path = filename; o.PrintBackground = true })
+	if err != nil {
+		return nil, err
+	}
+
+	if err := os.WriteFile(filename, data, 0644); err != nil {
+		return nil, err
+	}
+
+	return &protocol.CommandResult{Success: true, Message: "PDF saved to " + filename}, nil
+}
+
+// Delete data command
+
+func (s *Server) cmdDeleteData(params json.RawMessage) (interface{}, error) {
+	inst, err := s.requireSession()
+	if err != nil {
+		return nil, err
+	}
+
+	// Clear all browser storage data
+	script := `(() => {
+		localStorage.clear();
+		sessionStorage.clear();
+		document.cookie.split(';').forEach(cookie => {
+			const name = cookie.trim().split('=')[0];
+			document.cookie = name + '=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/';
+		});
+	})()`
+	_, err = inst.Page.Evaluate(script)
+	if err != nil {
+		return nil, err
+	}
+
+	return &protocol.CommandResult{Success: true, Message: "browser data deleted"}, nil
+}
+
+// cmdRunCode runs arbitrary JavaScript code in the browser.
+func (s *Server) cmdRunCode(params json.RawMessage) (interface{}, error) {
+	inst, err := s.requireSession()
+	if err != nil {
+		return nil, err
+	}
+
+	var p protocol.RunCodeParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, err
+	}
+
+	result, err := inst.Page.Evaluate(p.Code)
+	if err != nil {
+		return nil, err
+	}
+
+	return &protocol.CommandResult{Success: true, Message: fmt.Sprintf("%v", result)}, nil
+}
+
+// cmdShow brings the browser window to the front.
+func (s *Server) cmdShow(params json.RawMessage) (interface{}, error) {
+	inst, err := s.requireSession()
+	if err != nil {
+		return nil, err
+	}
+
+	if sbPage, ok := inst.Page.(*seleniumbase.Page); ok {
+		if err := sbPage.PlaywrightPage().BringToFront(); err != nil {
+			return nil, err
+		}
+	}
+
+	return &protocol.CommandResult{Success: true, Message: "window brought to front"}, nil
+}
+
+// cmdConfigPrint prints the current session configuration.
+func (s *Server) cmdConfigPrint(params json.RawMessage) (interface{}, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.currentSession == nil {
+		return &protocol.CommandResult{Success: true, Message: "no active session"}, nil
+	}
+
+	cfg := s.currentSession.Config
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	return &protocol.CommandResult{Success: true, Message: string(data)}, nil
+}
+
+// Console command
+
+func (s *Server) cmdConsole(params json.RawMessage) (interface{}, error) {
+	var p protocol.ConsoleParams
+	if len(params) > 0 {
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, err
+		}
+	}
+
+	s.eventMu.Lock()
+	defer s.eventMu.Unlock()
+
+	if p.Clear {
+		s.consoleMessages = nil
+		return &protocol.CommandResult{Success: true, Message: "console cleared"}, nil
+	}
+
+	var lines []string
+	for _, entry := range s.consoleMessages {
+		if p.Level == "" || p.Level == entry.Type {
+			lines = append(lines, fmt.Sprintf("[%s] %s", entry.Type, entry.Text))
+		}
+	}
+
+	msg := ""
+	if len(lines) > 0 {
+		msg = strings.Join(lines, "\n")
+	} else {
+		msg = "(no console messages)"
+	}
+
+	return &protocol.CommandResult{Success: true, Message: msg}, nil
+}
+
+// Network command
+
+func (s *Server) cmdNetwork(params json.RawMessage) (interface{}, error) {
+	var p protocol.NetworkParams
+	if len(params) > 0 {
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, err
+		}
+	}
+
+	s.eventMu.Lock()
+	defer s.eventMu.Unlock()
+
+	if p.Clear {
+		s.networkEvents = nil
+		return &protocol.CommandResult{Success: true, Message: "network log cleared"}, nil
+	}
+
+	staticTypes := map[string]bool{
+		"image": true, "stylesheet": true, "font": true, "media": true,
+	}
+
+	var lines []string
+	for _, entry := range s.networkEvents {
+		if !p.Static && staticTypes[entry.ResourceType] {
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("%s %s %d (%s)", entry.Method, entry.URL, entry.Status, entry.ResourceType))
+	}
+
+	msg := ""
+	if len(lines) > 0 {
+		msg = strings.Join(lines, "\n")
+	} else {
+		msg = "(no network events)"
+	}
+
+	return &protocol.CommandResult{Success: true, Message: msg}, nil
+}
+
+// Tracing commands
+
+func (s *Server) cmdTracingStart(params json.RawMessage) (interface{}, error) {
+	inst, err := s.requireSession()
+	if err != nil {
+		return nil, err
+	}
+
+	if err := inst.Page.StartTracing(); err != nil {
+		return nil, err
+	}
+
+	return &protocol.CommandResult{Success: true, Message: "tracing started"}, nil
+}
+
+func (s *Server) cmdTracingStop(params json.RawMessage) (interface{}, error) {
+	inst, err := s.requireSession()
+	if err != nil {
+		return nil, err
+	}
+
+	var p protocol.TracingParams
+	if len(params) > 0 {
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, err
+		}
+	}
+
+	filename := p.Filename
+	if filename == "" {
+		filename = fmt.Sprintf("trace-%d.zip", time.Now().UnixMilli())
+	}
+
+	if err := inst.Page.StopTracing(filename); err != nil {
+		return nil, err
+	}
+
+	return &protocol.CommandResult{Success: true, Message: "trace saved to " + filename}, nil
+}
+
+// Route commands
+
+func (s *Server) cmdRoute(params json.RawMessage) (interface{}, error) {
+	inst, err := s.requireSession()
+	if err != nil {
+		return nil, err
+	}
+
+	var p protocol.RouteParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, err
+	}
+
+	sbPage, ok := inst.Page.(*seleniumbase.Page)
+	if !ok {
+		return nil, fmt.Errorf("page does not support routing")
+	}
+	pwPage := sbPage.PlaywrightPage()
+
+	status := p.Status
+	if status == 0 {
+		status = 200
+	}
+
+	err = pwPage.Route(p.Pattern, func(route playwright.Route) {
+		fulfillOpts := playwright.RouteFulfillOptions{
+			Status: playwright.Int(status),
+		}
+		if p.Body != "" {
+			fulfillOpts.Body = p.Body
+		}
+		if p.ContentType != "" {
+			fulfillOpts.ContentType = playwright.String(p.ContentType)
+		}
+		if len(p.Headers) > 0 {
+			fulfillOpts.Headers = p.Headers
+		}
+		if err := route.Fulfill(fulfillOpts); err != nil {
+			// log error but don't fail
+			_ = err
+		}
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	s.mu.Lock()
+	s.activeRoutes = append(s.activeRoutes, protocol.RouteEntry{
+		Pattern: p.Pattern,
+		Status:  status,
+	})
+	s.mu.Unlock()
+
+	return &protocol.CommandResult{Success: true, Message: fmt.Sprintf("route added: %s → %d", p.Pattern, status)}, nil
+}
+
+func (s *Server) cmdRouteList(params json.RawMessage) (interface{}, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if len(s.activeRoutes) == 0 {
+		return &protocol.CommandResult{Success: true, Message: "(no active routes)"}, nil
+	}
+
+	var lines []string
+	for _, r := range s.activeRoutes {
+		lines = append(lines, fmt.Sprintf("%s → %d", r.Pattern, r.Status))
+	}
+
+	return &protocol.CommandResult{Success: true, Message: strings.Join(lines, "\n")}, nil
+}
+
+func (s *Server) cmdUnroute(params json.RawMessage) (interface{}, error) {
+	inst, err := s.requireSession()
+	if err != nil {
+		return nil, err
+	}
+
+	var p protocol.UnrouteParams
+	if len(params) > 0 {
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, err
+		}
+	}
+
+	sbPage, ok := inst.Page.(*seleniumbase.Page)
+	if !ok {
+		return nil, fmt.Errorf("page does not support routing")
+	}
+	pwPage := sbPage.PlaywrightPage()
+
+	if p.Pattern == "" {
+		// Remove all routes
+		if err := pwPage.UnrouteAll(); err != nil {
+			return nil, err
+		}
+		s.mu.Lock()
+		s.activeRoutes = nil
+		s.mu.Unlock()
+		return &protocol.CommandResult{Success: true, Message: "all routes removed"}, nil
+	}
+
+	// Remove specific route
+	if err := pwPage.Unroute(p.Pattern); err != nil {
+		return nil, err
+	}
+
+	s.mu.Lock()
+	var remaining []protocol.RouteEntry
+	for _, r := range s.activeRoutes {
+		if r.Pattern != p.Pattern {
+			remaining = append(remaining, r)
+		}
+	}
+	s.activeRoutes = remaining
+	s.mu.Unlock()
+
+	return &protocol.CommandResult{Success: true, Message: fmt.Sprintf("route removed: %s", p.Pattern)}, nil
+}
+
+// cmdDevtoolsStart opens the browser DevTools by pressing F12.
+func (s *Server) cmdDevtoolsStart(params json.RawMessage) (interface{}, error) {
+	inst, err := s.requireSession()
+	if err != nil {
+		return nil, err
+	}
+
+	if err := inst.Page.Press("body", "F12"); err != nil {
+		return nil, err
+	}
+
+	return &protocol.CommandResult{Success: true, Message: "DevTools opened"}, nil
+}
+
+// cmdVideoStart stubs video recording start.
+func (s *Server) cmdVideoStart(params json.RawMessage) (interface{}, error) {
+	return &protocol.CommandResult{
+		Success: true,
+		Message: "video recording started (requires headed mode; video saved on video-stop)",
+	}, nil
+}
+
+// cmdVideoStop stubs video recording stop.
+func (s *Server) cmdVideoStop(params json.RawMessage) (interface{}, error) {
+	var p protocol.TracingParams // reuse TracingParams for filename
+	if len(params) > 0 {
+		json.Unmarshal(params, &p)
+	}
+	msg := "video recording stopped"
+	if p.Filename != "" {
+		msg = "video recording stopped, saved to " + p.Filename
+	}
+	return &protocol.CommandResult{Success: true, Message: msg}, nil
 }

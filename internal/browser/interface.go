@@ -53,6 +53,11 @@ type Page interface {
 	Screenshot(opts ...ScreenshotOption) ([]byte, error)
 	Evaluate(script string, args ...any) (any, error)
 	AriaSnapshot() (string, error)
+	PDF(opts ...PDFOption) ([]byte, error)
+	EvaluateOnElement(selector, script string) (any, error)
+	MouseWheel(dx, dy float64) error
+	StartTracing(opts ...TracingOption) error
+	StopTracing(filename string) error
 	Close() error
 }
 
@@ -128,6 +133,8 @@ type ClickOption func(*ClickOptions)
 type TypeOption func(*TypeOptions)
 type WaitOption func(*WaitOptions)
 type ScreenshotOption func(*ScreenshotOptions)
+type PDFOption func(*PDFOptions)
+type TracingOption func(*TracingOptions)
 
 // Option structs
 
@@ -181,6 +188,17 @@ type ScreenshotOptions struct {
 	OmitBackground bool
 }
 
+type PDFOptions struct {
+	Path            string
+	Format          string
+	PrintBackground bool
+}
+
+type TracingOptions struct {
+	Screenshots bool
+	Snapshots   bool
+}
+
 // Option constructors
 
 func WithViewport(width, height int) PageOption {
@@ -228,5 +246,11 @@ func WithTypeDelay(d time.Duration) TypeOption {
 func WithFullPage() ScreenshotOption {
 	return func(o *ScreenshotOptions) {
 		o.FullPage = true
+	}
+}
+
+func WithTracingScreenshots() TracingOption {
+	return func(o *TracingOptions) {
+		o.Screenshots = true
 	}
 }

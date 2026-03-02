@@ -87,14 +87,34 @@ type GotoParams struct {
 
 // ClickParams represents parameters for the click command.
 type ClickParams struct {
-	Ref    string `json:"ref"`
-	Button string `json:"button,omitempty"` // left, right, middle
+	Ref       string   `json:"ref"`
+	Button    string   `json:"button,omitempty"` // left, right, middle
+	Modifiers []string `json:"modifiers,omitempty"`
+}
+
+// CookieSetParams represents parameters for the cookie-set command.
+type CookieSetParams struct {
+	Name     string  `json:"name"`
+	Value    string  `json:"value"`
+	Domain   string  `json:"domain,omitempty"`
+	Path     string  `json:"path,omitempty"`
+	Expires  float64 `json:"expires,omitempty"`
+	HTTPOnly bool    `json:"httpOnly,omitempty"`
+	Secure   bool    `json:"secure,omitempty"`
+	SameSite string  `json:"sameSite,omitempty"`
+}
+
+// CookieListParams represents parameters for the cookie-list command.
+type CookieListParams struct {
+	Domain string `json:"domain,omitempty"`
+	Path   string `json:"path,omitempty"`
 }
 
 // FillParams represents parameters for the fill command.
 type FillParams struct {
-	Ref  string `json:"ref"`
-	Text string `json:"text"`
+	Ref    string `json:"ref"`
+	Text   string `json:"text"`
+	Submit bool   `json:"submit,omitempty"`
 }
 
 // TypeParams represents parameters for the type command.
@@ -186,6 +206,11 @@ type KeyValueParams struct {
 	Value string `json:"value,omitempty"`
 }
 
+// RunCodeParams represents parameters for the run-code command.
+type RunCodeParams struct {
+	Code string `json:"code"`
+}
+
 // Result types
 
 // PageResult represents page information.
@@ -197,10 +222,11 @@ type PageResult struct {
 
 // SnapshotResult represents snapshot result.
 type SnapshotResult struct {
-	PageURL   string        `json:"pageUrl"`
-	PageTitle string        `json:"pageTitle"`
-	Elements  []ElementInfo `json:"elements"`
-	Filename  string        `json:"filename,omitempty"`
+	PageURL      string        `json:"pageUrl"`
+	PageTitle    string        `json:"pageTitle"`
+	AriaSnapshot string        `json:"ariaSnapshot,omitempty"` // Playwright native aria snapshot with refs
+	Elements     []ElementInfo `json:"elements"`
+	Filename     string        `json:"filename,omitempty"`
 }
 
 // ElementInfo represents element information in a snapshot.
@@ -225,11 +251,11 @@ type SessionResult struct {
 
 // CommandResult represents a generic command result.
 type CommandResult struct {
-	Success  bool        `json:"success"`
-	Page     *PageResult `json:"page,omitempty"`
-	Snapshot string      `json:"snapshot,omitempty"`
-	Message  string      `json:"message,omitempty"`
-	Data     any         `json:"data,omitempty"`
+	Success  bool            `json:"success"`
+	Page     *PageResult     `json:"page,omitempty"`
+	Snapshot *SnapshotResult `json:"snapshot,omitempty"`
+	Message  string          `json:"message,omitempty"`
+	Data     any             `json:"data,omitempty"`
 }
 
 // EvalResult represents the result of eval command.
@@ -265,4 +291,59 @@ type CookieResult struct {
 type StorageEntryResult struct {
 	Key   string `json:"key"`
 	Value string `json:"value"`
+}
+
+// ConsoleEntry represents a browser console message.
+type ConsoleEntry struct {
+	Type string `json:"type"` // "log","error","warning","info","debug"
+	Text string `json:"text"`
+	URL  string `json:"url,omitempty"`
+	Line int    `json:"line,omitempty"`
+}
+
+// ConsoleParams represents parameters for the console command.
+type ConsoleParams struct {
+	Level string `json:"level,omitempty"` // filter: "info","warning","error","debug"
+	Clear bool   `json:"clear,omitempty"`
+}
+
+// NetworkEntry represents a network request/response.
+type NetworkEntry struct {
+	URL          string `json:"url"`
+	Method       string `json:"method"`
+	Status       int    `json:"status"`
+	ResourceType string `json:"resourceType"`
+	Timestamp    int64  `json:"timestamp"`
+}
+
+// NetworkParams represents parameters for the network command.
+type NetworkParams struct {
+	Static bool `json:"static,omitempty"` // include static resources (images, CSS, fonts)
+	Clear  bool `json:"clear,omitempty"`
+}
+
+// TracingParams represents parameters for tracing commands.
+type TracingParams struct {
+	Filename string `json:"filename,omitempty"`
+}
+
+// RouteParams represents parameters for the route command.
+type RouteParams struct {
+	Pattern       string            `json:"pattern"`
+	Status        int               `json:"status,omitempty"`
+	Body          string            `json:"body,omitempty"`
+	ContentType   string            `json:"contentType,omitempty"`
+	Headers       map[string]string `json:"headers,omitempty"`
+	RemoveHeaders []string          `json:"removeHeaders,omitempty"`
+}
+
+// RouteEntry represents an active route.
+type RouteEntry struct {
+	Pattern string `json:"pattern"`
+	Status  int    `json:"status"`
+}
+
+// UnrouteParams represents parameters for the unroute command.
+type UnrouteParams struct {
+	Pattern string `json:"pattern,omitempty"`
 }

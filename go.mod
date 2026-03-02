@@ -3,7 +3,7 @@ module github.com/kyungw00k/sw
 go 1.22
 
 require (
-	github.com/kyungw00k/seleniumbase-go v0.0.0
+	github.com/kyungw00k/seleniumbase-go v1.3.0
 	github.com/playwright-community/playwright-go v0.5700.1
 	github.com/spf13/cobra v1.8.0
 )
@@ -17,5 +17,3 @@ require (
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
 )
-
-replace github.com/kyungw00k/seleniumbase-go => ../SeleniumBase-go

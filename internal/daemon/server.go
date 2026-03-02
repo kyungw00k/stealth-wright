@@ -28,10 +28,14 @@ type Server struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 	wg         sync.WaitGroup
-	mu         sync.RWMutex
+	mu      sync.RWMutex
+	eventMu sync.Mutex // separate lock for event buffers (consoleMessages, networkEvents)
 	// Current session/page state
 	currentSession  *session.Instance
 	currentSnapshot *protocol.SnapshotResult
+	consoleMessages []protocol.ConsoleEntry
+	networkEvents   []protocol.NetworkEntry
+	activeRoutes    []protocol.RouteEntry
 }
 
 // Config is the server configuration.

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/kyungw00k/sw/internal/client"
 	"github.com/kyungw00k/sw/internal/daemon"
@@ -94,6 +95,40 @@ undetected browser automation.`,
 		newStateLoadCmd(),
 		newKillAllCmd(),
 		newDaemonCmd(),
+		newCookieListCmd(),
+		newCookieGetCmd(),
+		newCookieSetCmd(),
+		newCookieDeleteCmd(),
+		newCookieClearCmd(),
+		newLocalStorageListCmd(),
+		newLocalStorageGetCmd(),
+		newLocalStorageSetCmd(),
+		newLocalStorageDeleteCmd(),
+		newLocalStorageClearCmd(),
+		newSessionStorageListCmd(),
+		newSessionStorageGetCmd(),
+		newSessionStorageSetCmd(),
+		newSessionStorageDeleteCmd(),
+		newSessionStorageClearCmd(),
+		newMouseWheelCmd(),
+		newPDFCmd(),
+		newDeleteDataCmd(),
+		newCloseAllCmd(),
+		newShowCmd(),
+		newConfigPrintCmd(),
+		newRunCodeCmd(),
+		newConsoleCmd(),
+		newNetworkCmd(),
+		newTracingStartCmd(),
+		newTracingStopCmd(),
+		newRouteCmd(),
+		newRouteListCmd(),
+		newUnrouteCmd(),
+		newDevtoolsStartCmd(),
+		newInstallCmd(),
+		newInstallBrowserCmd(),
+		newVideoStartCmd(),
+		newVideoStopCmd(),
 	)
 
 	if err := rootCmd.Execute(); err != nil {
@@ -121,39 +156,49 @@ func ensureDaemon() error {
 func printResult(result *protocol.CommandResult) {
 	if result.Page != nil {
 		fmt.Println("### Page")
-		fmt.Printf("- URL: %s\n", result.Page.URL)
-		fmt.Printf("- Title: %s\n", result.Page.Title)
+		fmt.Printf("- Page URL: %s\n", result.Page.URL)
+		fmt.Printf("- Page Title: %s\n", result.Page.Title)
 	}
 	if result.Message != "" {
 		fmt.Println(result.Message)
 	}
 }
 
-// printSnapshot prints a snapshot result
+// printSnapshot prints a snapshot result in playwright-cli format (file link only).
 func printSnapshot(result *protocol.SnapshotResult) {
 	fmt.Println("### Page")
-	fmt.Printf("- URL: %s\n", result.PageURL)
-	fmt.Printf("- Title: %s\n", result.PageTitle)
+	fmt.Printf("- Page URL: %s\n", result.PageURL)
+	fmt.Printf("- Page Title: %s\n", result.PageTitle)
 
 	if result.Filename != "" {
 		fmt.Println("\n### Snapshot")
 		fmt.Printf("- [Snapshot](%s)\n", result.Filename)
 	}
+}
 
-	if len(result.Elements) > 0 {
-		fmt.Println("\n### Elements")
-		for _, el := range result.Elements {
-			text := el.Text
-			if len(text) > 40 {
-				text = text[:37] + "..."
-			}
-			if text != "" {
-				fmt.Printf("- %s: <%s> %q\n", el.Ref, el.TagName, text)
-			} else {
-				fmt.Printf("- %s: <%s>\n", el.Ref, el.TagName)
-			}
-		}
+// printSnapshotVerbose prints a snapshot with inline ARIA tree content.
+func printSnapshotVerbose(result *protocol.SnapshotResult) {
+	printSnapshot(result)
+	if result.AriaSnapshot != "" {
+		fmt.Println()
+		fmt.Println(result.AriaSnapshot)
 	}
+}
+
+// printRanCode prints the "Ran Playwright code" section
+func printRanCode(jsCode string) {
+	fmt.Println("### Ran Playwright code")
+	fmt.Printf("```js\n%s\n```\n", jsCode)
+}
+
+// printBrowserOpened prints the browser opened message (playwright-cli format)
+func printBrowserOpened(sessionName, browserType, userDataDir string, headed bool) {
+	fmt.Printf("### Browser `%s` opened.\n", sessionName)
+	fmt.Printf("- %s:\n", sessionName)
+	fmt.Printf("  - browser-type: %s\n", browserType)
+	fmt.Printf("  - user-data-dir: %s\n", userDataDir)
+	fmt.Printf("  - headed: %v\n", headed)
+	fmt.Println("---")
 }
 
 func newOpenCmd() *cobra.Command {
@@ -182,12 +227,17 @@ func newOpenCmd() *cobra.Command {
 				os.Exit(1)
 			}
 
-			printResult(result)
+			userDataDir := "<in-memory>"
+			if profile != "" {
+				userDataDir = profile
+			}
+			printBrowserOpened(sessionName, browserType, userDataDir, headed)
 
-			// Auto snapshot
-			snap, err := cli.Snapshot()
-			if err == nil {
-				printSnapshot(snap)
+			if url != "" {
+				printRanCode(fmt.Sprintf("await page.goto('%s');", url))
+			}
+			if result != nil && result.Snapshot != nil {
+				printSnapshot(result.Snapshot)
 			}
 		},
 	}
@@ -230,12 +280,9 @@ func newGotoCmd() *cobra.Command {
 				os.Exit(1)
 			}
 
-			printResult(result)
-
-			// Auto snapshot
-			snap, err := cli.Snapshot()
-			if err == nil {
-				printSnapshot(snap)
+			printRanCode(fmt.Sprintf("await page.goto('%s');", args[0]))
+			if result != nil && result.Snapshot != nil {
+				printSnapshot(result.Snapshot)
 			}
 		},
 	}
@@ -264,7 +311,10 @@ func newGoBackCmd() *cobra.Command {
 
 			var result protocol.CommandResult
 			json.Unmarshal(resp.Result, &result)
-			printResult(&result)
+			printRanCode("await page.goBack();")
+			if result.Snapshot != nil {
+				printSnapshot(result.Snapshot)
+			}
 		},
 	}
 }
@@ -292,7 +342,10 @@ func newGoForwardCmd() *cobra.Command {
 
 			var result protocol.CommandResult
 			json.Unmarshal(resp.Result, &result)
-			printResult(&result)
+			printRanCode("await page.goForward();")
+			if result.Snapshot != nil {
+				printSnapshot(result.Snapshot)
+			}
 		},
 	}
 }
@@ -320,7 +373,10 @@ func newReloadCmd() *cobra.Command {
 
 			var result protocol.CommandResult
 			json.Unmarshal(resp.Result, &result)
-			printResult(&result)
+			printRanCode("await page.reload();")
+			if result.Snapshot != nil {
+				printSnapshot(result.Snapshot)
+			}
 		},
 	}
 }
@@ -341,13 +397,13 @@ func newSnapshotCmd() *cobra.Command {
 				os.Exit(1)
 			}
 
-			printSnapshot(result)
+			printSnapshotVerbose(result)
 		},
 	}
 }
 
 func newClickCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "click <ref>",
 		Short: "Click element",
 		Args:  cobra.ExactArgs(1),
@@ -357,19 +413,40 @@ func newClickCmd() *cobra.Command {
 				os.Exit(1)
 			}
 
-			result, err := cli.Click(args[0])
+			modifiers, _ := cmd.Flags().GetStringArray("modifiers")
+			params := map[string]interface{}{"ref": args[0]}
+			if len(modifiers) > 0 {
+				params["modifiers"] = modifiers
+			}
+
+			resp, err := cli.Call("click", params)
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "Error:", err)
 				os.Exit(1)
 			}
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
 
-			printResult(result)
+			var result protocol.CommandResult
+			json.Unmarshal(resp.Result, &result)
+			if len(modifiers) > 0 {
+				printRanCode(fmt.Sprintf("await page.locator('[ref=%s]').click({ button: '%s' });", args[0], strings.Join(modifiers, ",")))
+			} else {
+				printRanCode(fmt.Sprintf("await page.locator('[ref=%s]').click();", args[0]))
+			}
+			if result.Snapshot != nil {
+				printSnapshot(result.Snapshot)
+			}
 		},
 	}
+	cmd.Flags().StringArray("modifiers", nil, "Keyboard modifiers (Alt, Control, Meta, Shift)")
+	return cmd
 }
 
 func newFillCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "fill <ref> <text>",
 		Short: "Fill text into element",
 		Args:  cobra.ExactArgs(2),
@@ -378,16 +455,24 @@ func newFillCmd() *cobra.Command {
 				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
 				os.Exit(1)
 			}
-
+			submit, _ := cmd.Flags().GetBool("submit")
 			result, err := cli.Fill(args[0], args[1])
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "Error:", err)
 				os.Exit(1)
 			}
-
-			printResult(result)
+			// If --submit flag, send Enter after fill
+			if submit {
+				cli.Call("press", map[string]string{"key": "Enter"})
+			}
+			printRanCode(fmt.Sprintf("await page.locator('[ref=%s]').fill('%s');", args[0], args[1]))
+			if result != nil && result.Snapshot != nil {
+				printSnapshot(result.Snapshot)
+			}
 		},
 	}
+	cmd.Flags().Bool("submit", false, "Press Enter after filling")
+	return cmd
 }
 
 func newCheckCmd() *cobra.Command {
@@ -407,13 +492,16 @@ func newCheckCmd() *cobra.Command {
 				os.Exit(1)
 			}
 
-			printResult(result)
+			printRanCode(fmt.Sprintf("await page.locator('[ref=%s]').check();", args[0]))
+			if result != nil && result.Snapshot != nil {
+				printSnapshot(result.Snapshot)
+			}
 		},
 	}
 }
 
 func newTypeCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "type <text>",
 		Short: "Type text into focused element",
 		Args:  cobra.ExactArgs(1),
@@ -422,16 +510,23 @@ func newTypeCmd() *cobra.Command {
 				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
 				os.Exit(1)
 			}
-
+			submit, _ := cmd.Flags().GetBool("submit")
 			result, err := cli.Type(args[0])
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "Error:", err)
 				os.Exit(1)
 			}
-
-			printResult(result)
+			if submit {
+				cli.Call("press", map[string]string{"key": "Enter"})
+			}
+			printRanCode(fmt.Sprintf("await page.keyboard.type('%s');", args[0]))
+			if result != nil && result.Snapshot != nil {
+				printSnapshot(result.Snapshot)
+			}
 		},
 	}
+	cmd.Flags().Bool("submit", false, "Press Enter after typing")
+	return cmd
 }
 
 func newPressCmd() *cobra.Command {
@@ -451,7 +546,10 @@ func newPressCmd() *cobra.Command {
 				os.Exit(1)
 			}
 
-			printResult(result)
+			printRanCode(fmt.Sprintf("await page.keyboard.press('%s');", args[0]))
+			if result != nil && result.Snapshot != nil {
+				printSnapshot(result.Snapshot)
+			}
 		},
 	}
 }
@@ -473,31 +571,47 @@ func newHoverCmd() *cobra.Command {
 				os.Exit(1)
 			}
 
-			printResult(result)
+			printRanCode(fmt.Sprintf("await page.locator('[ref=%s]').hover();", args[0]))
+			if result != nil && result.Snapshot != nil {
+				printSnapshot(result.Snapshot)
+			}
 		},
 	}
 }
 
 func newScreenshotCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "screenshot [filename]",
+	cmd := &cobra.Command{
+		Use:   "screenshot",
 		Short: "Take screenshot",
-		Args:  cobra.MaximumNArgs(1),
+		Args:  cobra.NoArgs,
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := ensureDaemon(); err != nil {
 				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
 				os.Exit(1)
 			}
-
-			result, err := cli.Screenshot()
+			filename, _ := cmd.Flags().GetString("filename")
+			fullPage, _ := cmd.Flags().GetBool("full-page")
+			resp, err := cli.Call("screenshot", map[string]interface{}{
+				"filename": filename,
+				"fullPage": fullPage,
+			})
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "Error:", err)
 				os.Exit(1)
 			}
-
-			printResult(result)
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
+			var result protocol.CommandResult
+			json.Unmarshal(resp.Result, &result)
+			printRanCode("await page.screenshot();")
+			fmt.Println(result.Message)
 		},
 	}
+	cmd.Flags().String("filename", "", "Output filename")
+	cmd.Flags().Bool("full-page", false, "Capture full page")
+	return cmd
 }
 
 func newListCmd() *cobra.Command {
@@ -534,8 +648,9 @@ func newListCmd() *cobra.Command {
 
 func newDaemonCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "daemon",
-		Short: "Daemon management",
+		Use:    "daemon",
+		Short:  "Daemon management",
+		Hidden: true,
 	}
 
 	cmd.AddCommand(
@@ -891,7 +1006,7 @@ func newCookiesCmd() *cobra.Command {
 }
 
 func newDblClickCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "dblclick <ref>",
 		Short: "Double-click element",
 		Args:  cobra.ExactArgs(1),
@@ -901,7 +1016,13 @@ func newDblClickCmd() *cobra.Command {
 				os.Exit(1)
 			}
 
-			resp, err := cli.Call("dblclick", map[string]string{"ref": args[0]})
+			modifiers, _ := cmd.Flags().GetStringArray("modifiers")
+			params := map[string]interface{}{"ref": args[0]}
+			if len(modifiers) > 0 {
+				params["modifiers"] = modifiers
+			}
+
+			resp, err := cli.Call("dblclick", params)
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "Error:", err)
 				os.Exit(1)
@@ -912,9 +1033,16 @@ func newDblClickCmd() *cobra.Command {
 				os.Exit(1)
 			}
 
-			fmt.Println("Double-clicked", args[0])
+			var result protocol.CommandResult
+			json.Unmarshal(resp.Result, &result)
+			printRanCode(fmt.Sprintf("await page.locator('[ref=%s]').dblclick();", args[0]))
+			if result.Snapshot != nil {
+				printSnapshot(result.Snapshot)
+			}
 		},
 	}
+	cmd.Flags().StringArray("modifiers", nil, "Keyboard modifiers (Alt, Control, Meta, Shift)")
+	return cmd
 }
 
 func newUncheckCmd() *cobra.Command {
@@ -939,7 +1067,12 @@ func newUncheckCmd() *cobra.Command {
 				os.Exit(1)
 			}
 
-			fmt.Println("Unchecked", args[0])
+			var result protocol.CommandResult
+			json.Unmarshal(resp.Result, &result)
+			printRanCode(fmt.Sprintf("await page.locator('[ref=%s]').uncheck();", args[0]))
+			if result.Snapshot != nil {
+				printSnapshot(result.Snapshot)
+			}
 		},
 	}
 }
@@ -993,35 +1126,42 @@ func newSelectCmd() *cobra.Command {
 				os.Exit(1)
 			}
 
-			fmt.Println("Selected", args[1:], "in", args[0])
+			var result protocol.CommandResult
+			json.Unmarshal(resp.Result, &result)
+			printRanCode(fmt.Sprintf("await page.locator('[ref=%s]').selectOption('%s');", args[0], strings.Join(args[1:], ",")))
+			if result.Snapshot != nil {
+				printSnapshot(result.Snapshot)
+			}
 		},
 	}
 }
 
 func newEvalCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "eval <script>",
-		Short: "Evaluate JavaScript",
-		Args:  cobra.ExactArgs(1),
+		Use:   "eval <script> [ref]",
+		Short: "Evaluate JavaScript, optionally on an element",
+		Args:  cobra.RangeArgs(1, 2),
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := ensureDaemon(); err != nil {
 				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
 				os.Exit(1)
 			}
-
-			resp, err := cli.Call("eval", map[string]string{"script": args[0]})
+			params := map[string]string{"script": args[0]}
+			if len(args) > 1 {
+				params["ref"] = args[1]
+			}
+			resp, err := cli.Call("eval", params)
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "Error:", err)
 				os.Exit(1)
 			}
-
 			if resp.Error != nil {
 				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
 				os.Exit(1)
 			}
-
 			var result protocol.CommandResult
 			json.Unmarshal(resp.Result, &result)
+			printRanCode(fmt.Sprintf("await page.evaluate(%s);", args[0]))
 			fmt.Println(result.Message)
 		},
 	}
@@ -1490,4 +1630,984 @@ func newKillAllCmd() *cobra.Command {
 			fmt.Println("All browser processes killed")
 		},
 	}
+}
+
+func newCookieListCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "cookie-list",
+		Short: "List all cookies",
+		Args:  cobra.NoArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensureDaemon(); err != nil {
+				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
+				os.Exit(1)
+			}
+			domain, _ := cmd.Flags().GetString("domain")
+			path, _ := cmd.Flags().GetString("path")
+			params := map[string]string{}
+			if domain != "" {
+				params["domain"] = domain
+			}
+			if path != "" {
+				params["path"] = path
+			}
+			var callParams interface{}
+			if len(params) > 0 {
+				callParams = params
+			}
+			resp, err := cli.Call("cookie-list", callParams)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
+			var result protocol.CommandResult
+			json.Unmarshal(resp.Result, &result)
+			fmt.Println(result.Message)
+		},
+	}
+	cmd.Flags().String("domain", "", "Filter cookies by domain")
+	cmd.Flags().String("path", "", "Filter cookies by path")
+	return cmd
+}
+
+func newCookieGetCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "cookie-get <name>",
+		Short: "Get cookie value by name",
+		Args:  cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensureDaemon(); err != nil {
+				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
+				os.Exit(1)
+			}
+			resp, err := cli.Call("cookie-get", map[string]string{"key": args[0]})
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
+			var result protocol.CommandResult
+			json.Unmarshal(resp.Result, &result)
+			fmt.Println(result.Message)
+		},
+	}
+}
+
+func newCookieSetCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "cookie-set <name> <value>",
+		Short: "Set a cookie with optional flags",
+		Args:  cobra.ExactArgs(2),
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensureDaemon(); err != nil {
+				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
+				os.Exit(1)
+			}
+			name := args[0]
+			value := args[1]
+			domain, _ := cmd.Flags().GetString("domain")
+			path, _ := cmd.Flags().GetString("path")
+			expires, _ := cmd.Flags().GetFloat64("expires")
+			httpOnly, _ := cmd.Flags().GetBool("httpOnly")
+			secure, _ := cmd.Flags().GetBool("secure")
+			sameSite, _ := cmd.Flags().GetString("sameSite")
+
+			params := map[string]interface{}{
+				"name":  name,
+				"value": value,
+			}
+			if domain != "" {
+				params["domain"] = domain
+			}
+			if path != "" {
+				params["path"] = path
+			}
+			if expires != 0 {
+				params["expires"] = expires
+			}
+			if httpOnly {
+				params["httpOnly"] = httpOnly
+			}
+			if secure {
+				params["secure"] = secure
+			}
+			if sameSite != "" {
+				params["sameSite"] = sameSite
+			}
+
+			resp, err := cli.Call("cookie-set", params)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
+			fmt.Printf("Cookie set: %s = %s\n", name, value)
+		},
+	}
+	cmd.Flags().String("domain", "", "Cookie domain")
+	cmd.Flags().String("path", "", "Cookie path")
+	cmd.Flags().Float64("expires", 0, "Cookie expiry as Unix timestamp")
+	cmd.Flags().Bool("httpOnly", false, "Set HttpOnly flag")
+	cmd.Flags().Bool("secure", false, "Set Secure flag")
+	cmd.Flags().String("sameSite", "", "SameSite attribute (Strict, Lax, None)")
+	return cmd
+}
+
+func newCookieDeleteCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "cookie-delete <name>",
+		Short: "Delete a cookie by name",
+		Args:  cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensureDaemon(); err != nil {
+				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
+				os.Exit(1)
+			}
+			resp, err := cli.Call("cookie-delete", map[string]string{"key": args[0]})
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
+			fmt.Println("Cookie deleted:", args[0])
+		},
+	}
+}
+
+func newCookieClearCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "cookie-clear",
+		Short: "Clear all cookies",
+		Args:  cobra.NoArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensureDaemon(); err != nil {
+				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
+				os.Exit(1)
+			}
+			resp, err := cli.Call("cookie-clear", nil)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
+			fmt.Println("All cookies cleared")
+		},
+	}
+}
+
+func newLocalStorageListCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "localstorage-list",
+		Short: "List all localStorage entries",
+		Args:  cobra.NoArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensureDaemon(); err != nil {
+				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
+				os.Exit(1)
+			}
+			resp, err := cli.Call("localstorage-list", nil)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
+			var result protocol.CommandResult
+			json.Unmarshal(resp.Result, &result)
+			fmt.Println(result.Message)
+		},
+	}
+}
+
+func newLocalStorageGetCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "localstorage-get <key>",
+		Short: "Get localStorage value by key",
+		Args:  cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensureDaemon(); err != nil {
+				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
+				os.Exit(1)
+			}
+			resp, err := cli.Call("localstorage-get", map[string]string{"key": args[0]})
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
+			var result protocol.CommandResult
+			json.Unmarshal(resp.Result, &result)
+			fmt.Println(result.Message)
+		},
+	}
+}
+
+func newLocalStorageSetCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "localstorage-set <key> <value>",
+		Short: "Set localStorage value",
+		Args:  cobra.ExactArgs(2),
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensureDaemon(); err != nil {
+				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
+				os.Exit(1)
+			}
+			resp, err := cli.Call("localstorage-set", map[string]string{"key": args[0], "value": args[1]})
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
+			fmt.Printf("localStorage.%s = %s\n", args[0], args[1])
+		},
+	}
+}
+
+func newLocalStorageDeleteCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "localstorage-delete <key>",
+		Short: "Delete localStorage entry by key",
+		Args:  cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensureDaemon(); err != nil {
+				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
+				os.Exit(1)
+			}
+			resp, err := cli.Call("localstorage-delete", map[string]string{"key": args[0]})
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
+			fmt.Println("localStorage." + args[0] + " deleted")
+		},
+	}
+}
+
+func newLocalStorageClearCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "localstorage-clear",
+		Short: "Clear all localStorage entries",
+		Args:  cobra.NoArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensureDaemon(); err != nil {
+				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
+				os.Exit(1)
+			}
+			resp, err := cli.Call("localstorage-clear", nil)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
+			fmt.Println("localStorage cleared")
+		},
+	}
+}
+
+func newSessionStorageListCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "sessionstorage-list",
+		Short: "List all sessionStorage entries",
+		Args:  cobra.NoArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensureDaemon(); err != nil {
+				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
+				os.Exit(1)
+			}
+			resp, err := cli.Call("sessionstorage-list", nil)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
+			var result protocol.CommandResult
+			json.Unmarshal(resp.Result, &result)
+			fmt.Println(result.Message)
+		},
+	}
+}
+
+func newSessionStorageGetCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "sessionstorage-get <key>",
+		Short: "Get sessionStorage value by key",
+		Args:  cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensureDaemon(); err != nil {
+				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
+				os.Exit(1)
+			}
+			resp, err := cli.Call("sessionstorage-get", map[string]string{"key": args[0]})
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
+			var result protocol.CommandResult
+			json.Unmarshal(resp.Result, &result)
+			fmt.Println(result.Message)
+		},
+	}
+}
+
+func newSessionStorageSetCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "sessionstorage-set <key> <value>",
+		Short: "Set sessionStorage value",
+		Args:  cobra.ExactArgs(2),
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensureDaemon(); err != nil {
+				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
+				os.Exit(1)
+			}
+			resp, err := cli.Call("sessionstorage-set", map[string]string{"key": args[0], "value": args[1]})
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
+			fmt.Printf("sessionStorage.%s = %s\n", args[0], args[1])
+		},
+	}
+}
+
+func newSessionStorageDeleteCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "sessionstorage-delete <key>",
+		Short: "Delete sessionStorage entry by key",
+		Args:  cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensureDaemon(); err != nil {
+				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
+				os.Exit(1)
+			}
+			resp, err := cli.Call("sessionstorage-delete", map[string]string{"key": args[0]})
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
+			fmt.Println("sessionStorage." + args[0] + " deleted")
+		},
+	}
+}
+
+func newSessionStorageClearCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "sessionstorage-clear",
+		Short: "Clear all sessionStorage entries",
+		Args:  cobra.NoArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensureDaemon(); err != nil {
+				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
+				os.Exit(1)
+			}
+			resp, err := cli.Call("sessionstorage-clear", nil)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
+			fmt.Println("sessionStorage cleared")
+		},
+	}
+}
+
+func newMouseWheelCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "mousewheel <dx> <dy>",
+		Short: "Scroll using mouse wheel",
+		Args:  cobra.ExactArgs(2),
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensureDaemon(); err != nil {
+				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
+				os.Exit(1)
+			}
+			dx, _ := strconv.Atoi(args[0])
+			dy, _ := strconv.Atoi(args[1])
+			resp, err := cli.Call("mousewheel", map[string]int{"dx": dx, "dy": dy})
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
+			fmt.Printf("Scrolled dx=%s dy=%s\n", args[0], args[1])
+		},
+	}
+}
+
+func newPDFCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "pdf",
+		Short: "Generate PDF of current page",
+		Args:  cobra.NoArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensureDaemon(); err != nil {
+				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
+				os.Exit(1)
+			}
+			filename, _ := cmd.Flags().GetString("filename")
+			resp, err := cli.Call("pdf", map[string]string{"filename": filename})
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
+			var result protocol.CommandResult
+			json.Unmarshal(resp.Result, &result)
+			fmt.Println(result.Message)
+		},
+	}
+	cmd.Flags().String("filename", "", "Output PDF filename")
+	return cmd
+}
+
+func newDeleteDataCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "delete-data",
+		Short: "Delete all browser data (cookies, localStorage, sessionStorage)",
+		Args:  cobra.NoArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensureDaemon(); err != nil {
+				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
+				os.Exit(1)
+			}
+			resp, err := cli.Call("delete-data", nil)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
+			fmt.Println("Browser data deleted")
+		},
+	}
+}
+
+func newCloseAllCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "close-all",
+		Short: "Close all browser sessions",
+		Args:  cobra.NoArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensureDaemon(); err != nil {
+				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
+				os.Exit(1)
+			}
+			resp, err := cli.Call("close-all", nil)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
+			var cmdResult protocol.CommandResult
+			json.Unmarshal(resp.Result, &cmdResult)
+			fmt.Println(cmdResult.Message)
+		},
+	}
+}
+
+func newShowCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "show",
+		Short: "Bring browser window to front",
+		Args:  cobra.NoArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensureDaemon(); err != nil {
+				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
+				os.Exit(1)
+			}
+			resp, err := cli.Call("show", nil)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
+			var cmdResult protocol.CommandResult
+			json.Unmarshal(resp.Result, &cmdResult)
+			fmt.Println(cmdResult.Message)
+		},
+	}
+}
+
+func newConfigPrintCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "config-print",
+		Short: "Print current session configuration",
+		Args:  cobra.NoArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensureDaemon(); err != nil {
+				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
+				os.Exit(1)
+			}
+			resp, err := cli.Call("config-print", nil)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
+			var cmdResult protocol.CommandResult
+			json.Unmarshal(resp.Result, &cmdResult)
+			fmt.Println(cmdResult.Message)
+		},
+	}
+}
+
+func newRunCodeCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "run-code <code>",
+		Short: "Run JavaScript code in the browser",
+		Args:  cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensureDaemon(); err != nil {
+				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
+				os.Exit(1)
+			}
+			resp, err := cli.Call("run-code", protocol.RunCodeParams{Code: args[0]})
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
+			var cmdResult protocol.CommandResult
+			json.Unmarshal(resp.Result, &cmdResult)
+			fmt.Println(cmdResult.Message)
+		},
+	}
+}
+
+func newConsoleCmd() *cobra.Command {
+	var level string
+	var clear bool
+	cmd := &cobra.Command{
+		Use:   "console [level]",
+		Short: "Show browser console messages",
+		Args:  cobra.MaximumNArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensureDaemon(); err != nil {
+				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
+				os.Exit(1)
+			}
+			if len(args) > 0 {
+				level = args[0]
+			}
+			params := protocol.ConsoleParams{Level: level, Clear: clear}
+			resp, err := cli.Call("console", params)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
+			var cmdResult protocol.CommandResult
+			if err := json.Unmarshal(resp.Result, &cmdResult); err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			printResult(&cmdResult)
+		},
+	}
+	cmd.Flags().StringVar(&level, "level", "", "Filter by level (info, warning, error, debug)")
+	cmd.Flags().BoolVar(&clear, "clear", false, "Clear console messages")
+	return cmd
+}
+
+func newNetworkCmd() *cobra.Command {
+	var static bool
+	var clear bool
+	cmd := &cobra.Command{
+		Use:   "network",
+		Short: "Show network requests",
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensureDaemon(); err != nil {
+				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
+				os.Exit(1)
+			}
+			params := protocol.NetworkParams{Static: static, Clear: clear}
+			resp, err := cli.Call("network", params)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
+			var cmdResult protocol.CommandResult
+			if err := json.Unmarshal(resp.Result, &cmdResult); err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			printResult(&cmdResult)
+		},
+	}
+	cmd.Flags().BoolVar(&static, "static", false, "Include static resources")
+	cmd.Flags().BoolVar(&clear, "clear", false, "Clear network log")
+	return cmd
+}
+
+func newTracingStartCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "tracing-start",
+		Short: "Start browser tracing",
+		Args:  cobra.NoArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensureDaemon(); err != nil {
+				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
+				os.Exit(1)
+			}
+			resp, err := cli.Call("tracing-start", nil)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
+			var result protocol.CommandResult
+			json.Unmarshal(resp.Result, &result)
+			fmt.Println(result.Message)
+		},
+	}
+}
+
+func newTracingStopCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "tracing-stop",
+		Short: "Stop browser tracing and save trace file",
+		Args:  cobra.NoArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensureDaemon(); err != nil {
+				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
+				os.Exit(1)
+			}
+			filename, _ := cmd.Flags().GetString("filename")
+			resp, err := cli.Call("tracing-stop", protocol.TracingParams{Filename: filename})
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
+			var result protocol.CommandResult
+			json.Unmarshal(resp.Result, &result)
+			fmt.Println(result.Message)
+		},
+	}
+	cmd.Flags().String("filename", "", "Output filename for trace (default: trace-<timestamp>.zip)")
+	return cmd
+}
+
+func newRouteCmd() *cobra.Command {
+	var status int
+	var body string
+	var contentType string
+	var headers []string
+	var removeHeaders []string
+	cmd := &cobra.Command{
+		Use:   "route <pattern>",
+		Short: "Mock network requests matching pattern",
+		Args:  cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensureDaemon(); err != nil {
+				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
+				os.Exit(1)
+			}
+			headerMap := make(map[string]string)
+			for _, h := range headers {
+				parts := strings.SplitN(h, ":", 2)
+				if len(parts) == 2 {
+					headerMap[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+				}
+			}
+			params := protocol.RouteParams{
+				Pattern:       args[0],
+				Status:        status,
+				Body:          body,
+				ContentType:   contentType,
+				Headers:       headerMap,
+				RemoveHeaders: removeHeaders,
+			}
+			resp, err := cli.Call("route", params)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
+			var cmdResult protocol.CommandResult
+			if err := json.Unmarshal(resp.Result, &cmdResult); err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			printResult(&cmdResult)
+		},
+	}
+	cmd.Flags().IntVar(&status, "status", 200, "HTTP status code")
+	cmd.Flags().StringVar(&body, "body", "", "Response body")
+	cmd.Flags().StringVar(&contentType, "content-type", "", "Content-Type header")
+	cmd.Flags().StringArrayVar(&headers, "header", nil, "Additional headers (key:value)")
+	cmd.Flags().StringArrayVar(&removeHeaders, "remove-header", nil, "Headers to remove")
+	return cmd
+}
+
+func newRouteListCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "route-list",
+		Short: "List active network routes",
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensureDaemon(); err != nil {
+				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
+				os.Exit(1)
+			}
+			resp, err := cli.Call("route-list", nil)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
+			var cmdResult protocol.CommandResult
+			if err := json.Unmarshal(resp.Result, &cmdResult); err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			printResult(&cmdResult)
+		},
+	}
+}
+
+func newUnrouteCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "unroute [pattern]",
+		Short: "Remove network route(s)",
+		Args:  cobra.MaximumNArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensureDaemon(); err != nil {
+				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
+				os.Exit(1)
+			}
+			pattern := ""
+			if len(args) > 0 {
+				pattern = args[0]
+			}
+			params := protocol.UnrouteParams{Pattern: pattern}
+			resp, err := cli.Call("unroute", params)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
+			var cmdResult protocol.CommandResult
+			if err := json.Unmarshal(resp.Result, &cmdResult); err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			printResult(&cmdResult)
+		},
+	}
+}
+
+func newDevtoolsStartCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "devtools-start",
+		Short: "Show browser DevTools",
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensureDaemon(); err != nil {
+				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
+				os.Exit(1)
+			}
+			resp, err := cli.Call("devtools-start", nil)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
+			var result protocol.CommandResult
+			if err := json.Unmarshal(resp.Result, &result); err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			printResult(&result)
+		},
+	}
+}
+
+func newInstallCmd() *cobra.Command {
+	var skills bool
+	cmd := &cobra.Command{
+		Use:   "install",
+		Short: "Initialize workspace",
+		Run: func(cmd *cobra.Command, args []string) {
+			if skills {
+				if err := os.MkdirAll("skills", 0755); err != nil {
+					fmt.Fprintln(os.Stderr, "Error:", err)
+					os.Exit(1)
+				}
+				fmt.Println("skills directory created")
+			} else {
+				fmt.Println("workspace initialized")
+			}
+		},
+	}
+	cmd.Flags().BoolVar(&skills, "skills", false, "install skills for claude / github copilot")
+	return cmd
+}
+
+func newInstallBrowserCmd() *cobra.Command {
+	var browser string
+	cmd := &cobra.Command{
+		Use:   "install-browser",
+		Short: "Install browser",
+		Run: func(cmd *cobra.Command, args []string) {
+			if browser == "" {
+				browser = "chromium"
+			}
+			fmt.Printf("Installing %s browser...\n", browser)
+			fmt.Println("Run: npx playwright install " + browser)
+		},
+	}
+	cmd.Flags().StringVar(&browser, "browser", "", "browser or chrome channel to use (chrome, firefox, webkit, msedge)")
+	return cmd
+}
+
+func newVideoStartCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "video-start",
+		Short: "Start video recording",
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensureDaemon(); err != nil {
+				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
+				os.Exit(1)
+			}
+			resp, err := cli.Call("video-start", nil)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
+			var result protocol.CommandResult
+			if err := json.Unmarshal(resp.Result, &result); err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			printResult(&result)
+		},
+	}
+}
+
+func newVideoStopCmd() *cobra.Command {
+	var filename string
+	cmd := &cobra.Command{
+		Use:   "video-stop",
+		Short: "Stop video recording",
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensureDaemon(); err != nil {
+				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
+				os.Exit(1)
+			}
+			params := protocol.TracingParams{Filename: filename}
+			resp, err := cli.Call("video-stop", params)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
+			var result protocol.CommandResult
+			if err := json.Unmarshal(resp.Result, &result); err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			printResult(&result)
+		},
+	}
+	cmd.Flags().StringVar(&filename, "filename", "", "filename to save the video")
+	return cmd
 }

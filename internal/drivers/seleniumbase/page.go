@@ -147,13 +147,13 @@ func (p *Page) WaitForSelector(selector string, opts ...browser.WaitOption) (bro
 
 // Screenshot takes a screenshot.
 func (p *Page) Screenshot(opts ...browser.ScreenshotOption) ([]byte, error) {
-	fullPage := false
+	options := &browser.ScreenshotOptions{}
 	for _, o := range opts {
-		_ = o
+		o(options)
 	}
 
 	buf, err := p.pwPage.Screenshot(playwright.PageScreenshotOptions{
-		FullPage: playwright.Bool(fullPage),
+		FullPage: playwright.Bool(options.FullPage),
 	})
 	if err != nil {
 		return nil, err
@@ -166,7 +166,7 @@ func (p *Page) Evaluate(script string, args ...any) (any, error) {
 	return p.pwPage.Evaluate(script, args...)
 }
 
-// AriaSnapshot returns the accessibility tree snapshot.
+// AriaSnapshot returns the accessibility tree snapshot with element refs.
 func (p *Page) AriaSnapshot() (string, error) {
 	return p.pwPage.Locator("body").AriaSnapshot()
 }
@@ -174,4 +174,53 @@ func (p *Page) AriaSnapshot() (string, error) {
 // Close closes the page.
 func (p *Page) Close() error {
 	return p.pwPage.Close()
+}
+
+// PDF generates a PDF of the page.
+func (p *Page) PDF(opts ...browser.PDFOption) ([]byte, error) {
+	options := &browser.PDFOptions{}
+	for _, o := range opts {
+		o(options)
+	}
+	pwOpts := playwright.PagePdfOptions{}
+	if options.Format != "" {
+		pwOpts.Format = playwright.String(options.Format)
+	}
+	if options.Path != "" {
+		pwOpts.Path = playwright.String(options.Path)
+	}
+	pwOpts.PrintBackground = playwright.Bool(options.PrintBackground)
+	return p.pwPage.PDF(pwOpts)
+}
+
+// EvaluateOnElement evaluates a script in the context of an element.
+func (p *Page) EvaluateOnElement(selector, script string) (any, error) {
+	return p.pwPage.Locator(selector).Evaluate(script, nil)
+}
+
+// MouseWheel scrolls the page using mouse wheel.
+func (p *Page) MouseWheel(dx, dy float64) error {
+	return p.pwPage.Mouse().Wheel(dx, dy)
+}
+
+// PlaywrightPage returns the underlying playwright.Page for advanced operations.
+func (p *Page) PlaywrightPage() playwright.Page {
+	return p.pwPage
+}
+
+// StartTracing starts browser tracing.
+func (p *Page) StartTracing(opts ...browser.TracingOption) error {
+	options := &browser.TracingOptions{}
+	for _, o := range opts {
+		o(options)
+	}
+	return p.pwPage.Context().Tracing().Start(playwright.TracingStartOptions{
+		Screenshots: playwright.Bool(options.Screenshots),
+		Snapshots:   playwright.Bool(options.Snapshots),
+	})
+}
+
+// StopTracing stops browser tracing and saves to file.
+func (p *Page) StopTracing(filename string) error {
+	return p.pwPage.Context().Tracing().Stop(filename)
 }
