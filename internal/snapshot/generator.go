@@ -76,8 +76,8 @@ func (g *Generator) Generate(page browser.Page) (*protocol.SnapshotResult, error
 		return path.join(' > ');
 	}
 	
-	// Get all visible elements
-	const elements = document.querySelectorAll('a, button, input, select, textarea, [role="button"], [onclick], h1, h2, h3, h4, h5, h6, label, img, [aria-label]');
+	// Get all visible elements (including divs with id, class, or event handlers)
+	const elements = document.querySelectorAll('a, button, input, select, textarea, [role="button"], [onclick], h1, h2, h3, h4, h5, h6, label, img, [aria-label], div[id], div[onclick], div[style], p, span[id], section, article, form, table, ul, ol, li');
 	
 	elements.forEach((el) => {
 		const rect = el.getBoundingClientRect();

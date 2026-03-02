@@ -52,6 +52,7 @@ type Page interface {
 	WaitForSelector(selector string, opts ...WaitOption) (Element, error)
 	Screenshot(opts ...ScreenshotOption) ([]byte, error)
 	Evaluate(script string, args ...any) (any, error)
+	AriaSnapshot() (string, error)
 	Close() error
 }
 

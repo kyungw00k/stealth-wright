@@ -166,6 +166,11 @@ func (p *Page) Evaluate(script string, args ...any) (any, error) {
 	return p.pwPage.Evaluate(script, args...)
 }
 
+// AriaSnapshot returns the accessibility tree snapshot.
+func (p *Page) AriaSnapshot() (string, error) {
+	return p.pwPage.Locator("body").AriaSnapshot()
+}
+
 // Close closes the page.
 func (p *Page) Close() error {
 	return p.pwPage.Close()
