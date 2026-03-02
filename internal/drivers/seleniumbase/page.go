@@ -33,7 +33,16 @@ func (p *Page) Goto(url string, opts ...browser.GotoOption) error {
 		WaitUntil: waitUntil,
 		Timeout:   playwright.Float(float64(timeout.Milliseconds())),
 	})
-	return err
+	if err != nil {
+		return err
+	}
+
+	// Best-effort wait for network to settle so JS rendering completes before snapshot.
+	_ = p.pwPage.WaitForLoadState(playwright.PageWaitForLoadStateOptions{
+		State:   playwright.LoadStateNetworkidle,
+		Timeout: playwright.Float(5000),
+	})
+	return nil
 }
 
 // GoBack navigates back.

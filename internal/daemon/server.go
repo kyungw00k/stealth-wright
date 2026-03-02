@@ -37,6 +37,8 @@ type Server struct {
 	networkEvents   []protocol.NetworkEntry
 	activeRoutes    []protocol.RouteEntry
 	videoDir        string
+	outputDir       string // base output dir for snapshots and console logs (.playwright-cli)
+	lastConsoleLen  int    // number of console messages processed in last takeSnapshot
 }
 
 // Config is the server configuration.
@@ -61,10 +63,11 @@ func NewServer(cfg *Config) (*Server, error) {
 	s := &Server{
 		socketPath: cfg.SocketPath,
 		sessions:   session.NewManager(cfg.BaseDir),
-		snapshots:  snapshot.NewGenerator(filepath.Join(cfg.BaseDir, "snapshots")),
+		snapshots:  snapshot.NewGenerator(cfg.BaseDir),
 		commands:   NewCommandRegistry(),
 		ctx:        ctx,
 		cancel:     cancel,
+		outputDir:  cfg.BaseDir,
 	}
 
 	// Register commands

@@ -118,6 +118,7 @@ func (s *Server) registerCommands() {
 	s.commands.Register("unroute", s.cmdUnroute)
 	s.commands.Register("video-start", s.cmdVideoStart)
 	s.commands.Register("video-stop", s.cmdVideoStop)
+	s.commands.Register("stop", s.cmdStop)
 }
 
 // requireSession ensures a session is active.
@@ -134,14 +135,65 @@ func (s *Server) requireSession() (*session.Instance, error) {
 // takeSnapshot generates a snapshot and stores it as the current snapshot.
 // Returns nil if snapshot generation fails (non-fatal).
 func (s *Server) takeSnapshot(page browser.Page) *protocol.SnapshotResult {
+	// Capture console state before generating snapshot
+	s.eventMu.Lock()
+	msgs := make([]protocol.ConsoleEntry, len(s.consoleMessages))
+	copy(msgs, s.consoleMessages)
+	prevLen := s.lastConsoleLen
+	s.lastConsoleLen = len(msgs)
+	s.eventMu.Unlock()
+
 	snap, err := s.snapshots.Generate(page)
 	if err != nil {
 		return nil
 	}
+
+	// Count cumulative errors/warnings
+	errors, warnings := 0, 0
+	for _, m := range msgs {
+		switch m.Type {
+		case "error":
+			errors++
+		case "warning":
+			warnings++
+		}
+	}
+	snap.ConsoleErrors = errors
+	snap.ConsoleWarnings = warnings
+
+	// Write new console entries to file if any
+	newEntries := msgs[prevLen:]
+	if len(newEntries) > 0 {
+		snap.ConsoleLogFile = s.writeConsoleLog(newEntries)
+	}
+
 	s.mu.Lock()
 	s.currentSnapshot = snap
 	s.mu.Unlock()
 	return snap
+}
+
+// writeConsoleLog writes console entries to a timestamped log file in outputDir.
+// Returns the full path of the written file, or "" on failure.
+func (s *Server) writeConsoleLog(entries []protocol.ConsoleEntry) string {
+	if s.outputDir == "" {
+		return ""
+	}
+	if err := os.MkdirAll(s.outputDir, 0755); err != nil {
+		return ""
+	}
+	t := time.Now().UTC()
+	ms := t.Nanosecond() / 1e6
+	filename := fmt.Sprintf("console-%s-%03dZ.log", t.Format("2006-01-02T15-04-05"), ms)
+	fullPath := filepath.Join(s.outputDir, filename)
+	var lines []string
+	for _, e := range entries {
+		lines = append(lines, fmt.Sprintf("[%s] %s", e.Type, e.Text))
+	}
+	if err := os.WriteFile(fullPath, []byte(strings.Join(lines, "\n")+"\n"), 0644); err != nil {
+		return ""
+	}
+	return fullPath
 }
 
 // resolveSelector resolves a ref to a selector.
@@ -192,6 +244,7 @@ func (s *Server) cmdOpen(params json.RawMessage) (interface{}, error) {
 		Browser: p.Browser,
 		Headed:  p.Headed,
 		Stealth: p.Stealth,
+		Device:  p.Device,
 	}
 	if cfg.Browser == "" {
 		cfg.Browser = "chromium"
@@ -246,8 +299,28 @@ func (s *Server) cmdOpen(params json.RawMessage) (interface{}, error) {
 		}
 	}
 
+	// Capture console stats accumulated during page load
+	s.eventMu.Lock()
+	msgs := make([]protocol.ConsoleEntry, len(s.consoleMessages))
+	copy(msgs, s.consoleMessages)
+	s.lastConsoleLen = len(msgs)
+	s.eventMu.Unlock()
+
 	// Generate snapshot while already holding s.mu.Lock() (takeSnapshot would deadlock)
 	snapData, _ := s.snapshots.Generate(inst.Page)
+	if snapData != nil {
+		errors, warnings := 0, 0
+		for _, m := range msgs {
+			switch m.Type {
+			case "error":
+				errors++
+			case "warning":
+				warnings++
+			}
+		}
+		snapData.ConsoleErrors = errors
+		snapData.ConsoleWarnings = warnings
+	}
 	s.currentSnapshot = snapData
 
 	return &protocol.CommandResult{
@@ -646,7 +719,17 @@ func (s *Server) cmdScreenshot(params json.RawMessage) (interface{}, error) {
 
 	filename := p.Filename
 	if filename == "" {
-		filename = fmt.Sprintf("screenshot-%d.png", time.Now().UnixMilli())
+		t := time.Now().UTC()
+		ms := t.Nanosecond() / 1e6
+		name := fmt.Sprintf("page-%s-%03dZ.png", t.Format("2006-01-02T15-04-05"), ms)
+		if s.outputDir != "" {
+			if err := os.MkdirAll(s.outputDir, 0755); err == nil {
+				filename = filepath.Join(s.outputDir, name)
+			}
+		}
+		if filename == "" {
+			filename = name
+		}
 	}
 
 	if err := os.WriteFile(filename, data, 0644); err != nil {
@@ -1189,26 +1272,49 @@ func (s *Server) cmdStateSave(params json.RawMessage) (interface{}, error) {
 		}
 	}
 
-	// Get storage state
-	script := `JSON.stringify({
-		localStorage: Object.keys(localStorage).map(k => ({key: k, value: localStorage.getItem(k)})),
-		sessionStorage: Object.keys(sessionStorage).map(k => ({key: k, value: sessionStorage.getItem(k)}))
-	})`
-	result, err := inst.Page.Evaluate(script)
+	// Get storage state via Playwright API
+	sbPage, ok := inst.Page.(*seleniumbase.Page)
+	if !ok {
+		return nil, fmt.Errorf("state-save not supported for this driver")
+	}
+	state, err := sbPage.PlaywrightPage().Context().StorageState()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to get storage state: %w", err)
+	}
+
+	stateJSON, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("failed to serialize state: %w", err)
+	}
+
+	filename := p.Filename
+	if filename == "" {
+		t := time.Now().UTC()
+		ms := t.Nanosecond() / 1e6
+		name := fmt.Sprintf("state-%s-%03dZ.json", t.Format("2006-01-02T15-04-05"), ms)
+		if s.outputDir != "" {
+			if err := os.MkdirAll(s.outputDir, 0755); err == nil {
+				filename = filepath.Join(s.outputDir, name)
+			}
+		}
+		if filename == "" {
+			filename = name
+		}
+	}
+
+	if err := os.WriteFile(filename, stateJSON, 0644); err != nil {
+		return nil, fmt.Errorf("failed to write state file: %w", err)
 	}
 
 	return &protocol.CommandResult{
 		Success: true,
-		Message: "state saved",
-		Data:    result,
+		Message: "state saved to " + filename,
 	}, nil
 }
 
 // cmdStateLoad handles state load command.
 func (s *Server) cmdStateLoad(params json.RawMessage) (interface{}, error) {
-	_, err := s.requireSession()
+	inst, err := s.requireSession()
 	if err != nil {
 		return nil, err
 	}
@@ -1218,8 +1324,81 @@ func (s *Server) cmdStateLoad(params json.RawMessage) (interface{}, error) {
 		return nil, err
 	}
 
-	// Load state from file (simplified - just acknowledge)
-	return &protocol.CommandResult{Success: true, Message: "state loaded from " + p.Filename}, nil
+	data, err := os.ReadFile(p.Filename)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read state file: %w", err)
+	}
+
+	sbPage, ok := inst.Page.(*seleniumbase.Page)
+	if !ok {
+		return nil, fmt.Errorf("state-load not supported for this driver")
+	}
+	pwCtx := sbPage.PlaywrightPage().Context()
+
+	// Parse the state JSON (playwright format: {cookies: [...], origins: [...]})
+	type cookieJSON struct {
+		Name     string  `json:"name"`
+		Value    string  `json:"value"`
+		Domain   string  `json:"domain"`
+		Path     string  `json:"path"`
+		Expires  float64 `json:"expires"`
+		HTTPOnly bool    `json:"httpOnly"`
+		Secure   bool    `json:"secure"`
+		SameSite string  `json:"sameSite"`
+	}
+	var state struct {
+		Cookies []cookieJSON `json:"cookies"`
+		Origins []struct {
+			Origin       string `json:"origin"`
+			LocalStorage []struct {
+				Name  string `json:"name"`
+				Value string `json:"value"`
+			} `json:"localStorage"`
+		} `json:"origins"`
+	}
+	if err := json.Unmarshal(data, &state); err != nil {
+		return nil, fmt.Errorf("failed to parse state file: %w", err)
+	}
+
+	if len(state.Cookies) > 0 {
+		cookies := make([]playwright.OptionalCookie, len(state.Cookies))
+		for i, c := range state.Cookies {
+			cookies[i] = playwright.OptionalCookie{
+				Name:     c.Name,
+				Value:    c.Value,
+				Domain:   playwright.String(c.Domain),
+				Path:     playwright.String(c.Path),
+				HttpOnly: playwright.Bool(c.HTTPOnly),
+				Secure:   playwright.Bool(c.Secure),
+			}
+		}
+		if err := pwCtx.AddCookies(cookies); err != nil {
+			return nil, fmt.Errorf("failed to restore cookies: %w", err)
+		}
+	}
+
+	// Restore localStorage per origin via JS
+	for _, origin := range state.Origins {
+		if len(origin.LocalStorage) == 0 {
+			continue
+		}
+		entriesJSON, _ := json.Marshal(origin.LocalStorage)
+		script := fmt.Sprintf(`(() => {
+			const entries = %s;
+			for (const {name, value} of entries) {
+				try { localStorage.setItem(name, value); } catch(e) {}
+			}
+		})()`, string(entriesJSON))
+		if _, err := inst.Page.Evaluate(script); err != nil {
+			// Non-fatal: page may be on a different origin
+			_ = err
+		}
+	}
+
+	return &protocol.CommandResult{
+		Success: true,
+		Message: "state loaded from " + p.Filename,
+	}, nil
 }
 
 // cmdKillAll handles kill all command.
@@ -1676,6 +1855,7 @@ func (s *Server) cmdConsole(params json.RawMessage) (interface{}, error) {
 
 	if p.Clear {
 		s.consoleMessages = nil
+		s.lastConsoleLen = 0
 		return &protocol.CommandResult{Success: true, Message: "console cleared"}, nil
 	}
 
@@ -1766,7 +1946,18 @@ func (s *Server) cmdTracingStop(params json.RawMessage) (interface{}, error) {
 
 	filename := p.Filename
 	if filename == "" {
-		filename = fmt.Sprintf("trace-%d.zip", time.Now().UnixMilli())
+		t := time.Now().UTC()
+		ms := t.Nanosecond() / 1e6
+		name := fmt.Sprintf("trace-%s-%03dZ.zip", t.Format("2006-01-02T15-04-05"), ms)
+		if s.outputDir != "" {
+			tracesDir := filepath.Join(s.outputDir, "traces")
+			if err := os.MkdirAll(tracesDir, 0755); err == nil {
+				filename = filepath.Join(tracesDir, name)
+			}
+		}
+		if filename == "" {
+			filename = name
+		}
 	}
 
 	if err := inst.Page.StopTracing(filename); err != nil {
@@ -1920,6 +2111,7 @@ func (s *Server) cmdVideoStart(params json.RawMessage) (interface{}, error) {
 	s.currentSession = nil
 	s.consoleMessages = nil
 	s.networkEvents = nil
+	s.lastConsoleLen = 0
 
 	// Restart session with RecordVideo
 	newCfg := &session.Config{
@@ -2124,4 +2316,10 @@ func (s *Server) cmdVideoStop(params json.RawMessage) (interface{}, error) {
 		Success: true,
 		Message: fmt.Sprintf("video recording stopped, saved to %s", dest),
 	}, nil
+}
+
+// cmdStop handles the "stop" command: gracefully shuts down the daemon.
+func (s *Server) cmdStop(params json.RawMessage) (interface{}, error) {
+	go s.Stop()
+	return &protocol.CommandResult{Success: true, Message: "stopping"}, nil
 }

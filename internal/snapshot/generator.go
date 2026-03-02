@@ -192,7 +192,9 @@ func (g *Generator) Generate(page browser.Page) (*protocol.SnapshotResult, error
 		if err := os.MkdirAll(g.outputDir, 0755); err != nil {
 			return nil, err
 		}
-		filename := fmt.Sprintf("snapshot-%s.yml", time.Now().Format("2006-01-02T15-04-05"))
+		t := time.Now().UTC()
+		ms := t.Nanosecond() / 1e6
+		filename := fmt.Sprintf("page-%s-%03dZ.yml", t.Format("2006-01-02T15-04-05"), ms)
 		fullPath := filepath.Join(g.outputDir, filename)
 		snapshot.Filename = fullPath
 		if err := g.Save(snapshot, fullPath); err != nil {
