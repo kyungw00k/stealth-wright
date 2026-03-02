@@ -13,13 +13,14 @@ import (
 
 var (
 	// Global options
-	sessionName string
-	browserType string
-	headed      bool
-	persistent  bool
-	profile     string
-	configFile  string
-	stealthMode bool
+	sessionName   string
+	browserType   string
+	headed        bool
+	persistent    bool
+	profile       string
+	configFile    string
+	stealthMode   bool
+	noStealthMode bool
 
 	// Client
 	cli *client.Client
@@ -39,6 +40,15 @@ undetected browser automation.`,
 			cli = client.NewClient(&client.Config{
 				SocketPath: client.DefaultSocketPath(),
 			})
+
+			// Override session name from environment variable
+			if envSession := os.Getenv("PLAYWRIGHT_CLI_SESSION"); envSession != "" {
+				sessionName = envSession
+			}
+
+			if noStealthMode {
+				stealthMode = false
+			}
 		},
 	}
 
@@ -50,6 +60,7 @@ undetected browser automation.`,
 	rootCmd.PersistentFlags().StringVar(&profile, "profile", "", "Custom profile directory")
 	rootCmd.PersistentFlags().StringVar(&configFile, "config", "", "Config file path")
 	rootCmd.PersistentFlags().BoolVar(&stealthMode, "stealth", true, "Enable stealth mode")
+	rootCmd.PersistentFlags().BoolVar(&noStealthMode, "no-stealth", false, "Disable stealth mode")
 
 	// Add commands
 	rootCmd.AddCommand(
@@ -373,7 +384,7 @@ func newReloadCmd() *cobra.Command {
 }
 
 func newSnapshotCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "snapshot",
 		Short: "Generate page snapshot with element references",
 		Run: func(cmd *cobra.Command, args []string) {
@@ -382,15 +393,29 @@ func newSnapshotCmd() *cobra.Command {
 				os.Exit(1)
 			}
 
-			result, err := cli.Snapshot()
+			filename, _ := cmd.Flags().GetString("filename")
+			params := map[string]interface{}{}
+			if filename != "" {
+				params["filename"] = filename
+			}
+
+			resp, err := cli.Call("snapshot", params)
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "Error:", err)
 				os.Exit(1)
 			}
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
 
-			printSnapshotVerbose(result)
+			var result protocol.SnapshotResult
+			json.Unmarshal(resp.Result, &result)
+			printSnapshotVerbose(&result)
 		},
 	}
+	cmd.Flags().String("filename", "", "Save snapshot to file")
+	return cmd
 }
 
 func newClickCmd() *cobra.Command {
@@ -572,9 +597,9 @@ func newHoverCmd() *cobra.Command {
 
 func newScreenshotCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "screenshot",
+		Use:   "screenshot [ref]",
 		Short: "Take screenshot",
-		Args:  cobra.NoArgs,
+		Args:  cobra.MaximumNArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := ensureDaemon(); err != nil {
 				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
@@ -582,10 +607,18 @@ func newScreenshotCmd() *cobra.Command {
 			}
 			filename, _ := cmd.Flags().GetString("filename")
 			fullPage, _ := cmd.Flags().GetBool("full-page")
-			resp, err := cli.Call("screenshot", map[string]interface{}{
+			ref := ""
+			if len(args) > 0 {
+				ref = args[0]
+			}
+			params := map[string]interface{}{
 				"filename": filename,
 				"fullPage": fullPage,
-			})
+			}
+			if ref != "" {
+				params["ref"] = ref
+			}
+			resp, err := cli.Call("screenshot", params)
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "Error:", err)
 				os.Exit(1)
