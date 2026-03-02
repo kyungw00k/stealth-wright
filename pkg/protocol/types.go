@@ -229,6 +229,11 @@ type SnapshotResult struct {
 	Filename     string        `json:"filename,omitempty"`
 }
 
+// SnapshotParams represents parameters for the snapshot command.
+type SnapshotParams struct {
+	Filename string `json:"filename,omitempty"`
+}
+
 // ElementInfo represents element information in a snapshot.
 type ElementInfo struct {
 	Ref        string            `json:"ref"`
