@@ -35,6 +35,7 @@ sw close-all               # close all browser sessions
 sw reload                  # reload current page
 sw go-back                 # go back in history
 sw go-forward              # go forward in history
+sw devices                 # list all available devices for emulation
 ```
 
 ### Page Snapshots & Screenshots
@@ -172,15 +173,36 @@ sw video-stop              # stop video recording
 ## Global Options
 
 ```bash
--s, --session <name>       # Session name (default: "default")
--b, --browser <type>       # Browser: chromium, firefox, webkit (default: chromium)
-    --headed               # Run in headed mode (visible)
+-s, --session <name>       # Session name (env: SW_SESSION, default: "default")
+-b, --browser <type>       # Browser: chrome, chromium, firefox, webkit (env: SW_BROWSER, default: "chrome")
+    --headed               # Run in headed mode (env: SW_HEADED)
     --persistent           # Save profile to disk
-    --profile <path>       # Custom profile directory
+    --profile <path>       # Custom profile directory (env: SW_PROFILE)
     --config <file>        # Configuration file
-    --stealth              # Enable stealth mode (default: true)
+    --stealth              # Enable stealth mode (env: SW_STEALTH, default: true)
     --no-stealth           # Disable stealth mode
 ```
+
+### open-only Options
+
+```bash
+    --device <name>        # Emulate a device, e.g. "iPhone 15", "Pixel 7" (env: SW_DEVICE)
+```
+
+## Environment Variables
+
+All key options can be set via environment variables. CLI flags always take precedence.
+
+| Variable | Flag | Description |
+|---|---|---|
+| `SW_SESSION` | `-s` / `--session` | Session name |
+| `SW_BROWSER` | `-b` / `--browser` | Browser type |
+| `SW_HEADED` | `--headed` | Run in headed mode (`true`/`false`) |
+| `SW_STEALTH` | `--stealth` | Stealth mode (`true`/`false`, default `true`) |
+| `SW_PROFILE` | `--profile` | Profile directory path |
+| `SW_DEVICE` | `--device` | Device to emulate |
+
+Legacy alias: `PLAYWRIGHT_CLI_SESSION` is also accepted for `SW_SESSION`.
 
 ## Element References
 
@@ -228,6 +250,25 @@ sw -s=scrape open https://data.example.com
 sw -s=auth fill e1 "user"
 sw -s=scrape snapshot
 ```
+
+## Mobile Device Emulation
+
+Emulate a mobile device to test mobile-specific layouts and behaviors.
+
+```bash
+# List all available devices
+sw devices
+
+# Open browser with a specific device
+sw open --device "iPhone 15" https://example.com
+sw open --device "Pixel 7"
+sw open --device "iPad Pro 11"
+
+# Combine with headed mode to see the emulation
+sw open --headed --device "Galaxy S8" https://example.com
+```
+
+The `--device` flag sets the user agent, viewport size, device scale factor, touch events, and mobile flag to match the real device. Use `sw devices` to see the full list of supported device names.
 
 ## Example Workflows
 
