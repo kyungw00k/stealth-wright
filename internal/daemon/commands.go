@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -373,6 +374,11 @@ func (s *Server) cmdSnapshot(params json.RawMessage) (interface{}, error) {
 		return nil, err
 	}
 
+	var p protocol.SnapshotParams
+	if len(params) > 0 {
+		json.Unmarshal(params, &p)
+	}
+
 	snap, err := s.snapshots.Generate(inst.Page)
 	if err != nil {
 		return nil, err
@@ -381,6 +387,15 @@ func (s *Server) cmdSnapshot(params json.RawMessage) (interface{}, error) {
 	s.mu.Lock()
 	s.currentSnapshot = snap
 	s.mu.Unlock()
+
+	// Write to file if filename specified
+	if p.Filename != "" {
+		content := snap.AriaSnapshot
+		if err := os.WriteFile(p.Filename, []byte(content), 0644); err != nil {
+			return nil, fmt.Errorf("failed to write snapshot to file: %w", err)
+		}
+		snap.Filename = p.Filename
+	}
 
 	return snap, nil
 }
@@ -401,8 +416,43 @@ func (s *Server) cmdClick(params json.RawMessage) (interface{}, error) {
 		return nil, err
 	}
 
-	if err := inst.Page.Click(selector); err != nil {
-		return nil, err
+	// Use playwright directly when modifiers or non-default button are specified
+	if len(p.Modifiers) > 0 || (p.Button != "" && p.Button != "left") {
+		if sbPage, ok := inst.Page.(*seleniumbase.Page); ok {
+			pwPage := sbPage.PlaywrightPage()
+			opts := playwright.PageClickOptions{}
+			if p.Button != "" {
+				switch p.Button {
+				case "right":
+					opts.Button = playwright.MouseButtonRight
+				case "middle":
+					opts.Button = playwright.MouseButtonMiddle
+				}
+			}
+			for _, mod := range p.Modifiers {
+				switch mod {
+				case "Alt":
+					opts.Modifiers = append(opts.Modifiers, *playwright.KeyboardModifierAlt)
+				case "Control":
+					opts.Modifiers = append(opts.Modifiers, *playwright.KeyboardModifierControl)
+				case "Meta":
+					opts.Modifiers = append(opts.Modifiers, *playwright.KeyboardModifierMeta)
+				case "Shift":
+					opts.Modifiers = append(opts.Modifiers, *playwright.KeyboardModifierShift)
+				}
+			}
+			if err := pwPage.Click(selector, opts); err != nil {
+				return nil, err
+			}
+		} else {
+			if err := inst.Page.Click(selector); err != nil {
+				return nil, err
+			}
+		}
+	} else {
+		if err := inst.Page.Click(selector); err != nil {
+			return nil, err
+		}
 	}
 
 	snap := s.takeSnapshot(inst.Page)
@@ -567,9 +617,31 @@ func (s *Server) cmdScreenshot(params json.RawMessage) (interface{}, error) {
 		opts = append(opts, browser.WithFullPage())
 	}
 
-	data, err := inst.Page.Screenshot(opts...)
-	if err != nil {
-		return nil, err
+	var data []byte
+
+	// If ref is specified, take element screenshot
+	if p.Ref != "" {
+		selector, resolveErr := s.resolveSelector(p.Ref)
+		if resolveErr != nil {
+			return nil, resolveErr
+		}
+
+		if sbPage, ok := inst.Page.(*seleniumbase.Page); ok {
+			pwPage := sbPage.PlaywrightPage()
+			var shotErr error
+			data, shotErr = pwPage.Locator(selector).Screenshot()
+			if shotErr != nil {
+				return nil, shotErr
+			}
+		} else {
+			return nil, fmt.Errorf("element screenshot not supported for this driver")
+		}
+	} else {
+		var shotErr error
+		data, shotErr = inst.Page.Screenshot(opts...)
+		if shotErr != nil {
+			return nil, shotErr
+		}
 	}
 
 	filename := p.Filename
@@ -678,8 +750,35 @@ func (s *Server) cmdDblClick(params json.RawMessage) (interface{}, error) {
 		return nil, err
 	}
 
-	if err := inst.Page.DblClick(selector); err != nil {
-		return nil, err
+	// Use playwright directly when modifiers are specified
+	if len(p.Modifiers) > 0 {
+		if sbPage, ok := inst.Page.(*seleniumbase.Page); ok {
+			pwPage := sbPage.PlaywrightPage()
+			opts := playwright.PageDblclickOptions{}
+			for _, mod := range p.Modifiers {
+				switch mod {
+				case "Alt":
+					opts.Modifiers = append(opts.Modifiers, *playwright.KeyboardModifierAlt)
+				case "Control":
+					opts.Modifiers = append(opts.Modifiers, *playwright.KeyboardModifierControl)
+				case "Meta":
+					opts.Modifiers = append(opts.Modifiers, *playwright.KeyboardModifierMeta)
+				case "Shift":
+					opts.Modifiers = append(opts.Modifiers, *playwright.KeyboardModifierShift)
+				}
+			}
+			if err := pwPage.Dblclick(selector, opts); err != nil {
+				return nil, err
+			}
+		} else {
+			if err := inst.Page.DblClick(selector); err != nil {
+				return nil, err
+			}
+		}
+	} else {
+		if err := inst.Page.DblClick(selector); err != nil {
+			return nil, err
+		}
 	}
 
 	snap := s.takeSnapshot(inst.Page)
@@ -1797,23 +1896,232 @@ func (s *Server) cmdUnroute(params json.RawMessage) (interface{}, error) {
 	return &protocol.CommandResult{Success: true, Message: fmt.Sprintf("route removed: %s", p.Pattern)}, nil
 }
 
-// cmdVideoStart stubs video recording start.
+// cmdVideoStart starts real video recording by restarting the session with RecordVideo enabled.
 func (s *Server) cmdVideoStart(params json.RawMessage) (interface{}, error) {
+	inst, err := s.requireSession()
+	if err != nil {
+		return nil, err
+	}
+
+	// Save current URL and session config
+	currentURL := inst.Page.URL()
+	sessionCfg := inst.Config
+
+	// Create a temp dir for recording
+	videoDir, err := os.MkdirTemp("", "sw-video-*")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create video dir: %w", err)
+	}
+
+	s.mu.Lock()
+	s.videoDir = videoDir
+	// Close current session
+	s.sessions.Close(sessionCfg.Name)
+	s.currentSession = nil
+	s.consoleMessages = nil
+	s.networkEvents = nil
+
+	// Restart session with RecordVideo
+	newCfg := &session.Config{
+		Name:        sessionCfg.Name,
+		Browser:     sessionCfg.Browser,
+		Headed:      sessionCfg.Headed,
+		Stealth:     sessionCfg.Stealth,
+		Persistent:  sessionCfg.Persistent,
+		Profile:     sessionCfg.Profile,
+		UserDataDir: sessionCfg.UserDataDir,
+		RecordVideo: videoDir,
+	}
+	newInst, err := s.sessions.GetOrCreate(newCfg)
+	if err != nil {
+		s.mu.Unlock()
+		return nil, fmt.Errorf("failed to restart session for recording: %w", err)
+	}
+	s.currentSession = newInst
+
+	// Re-register event listeners
+	if sbPage, ok := newInst.Page.(*seleniumbase.Page); ok {
+		pwPage := sbPage.PlaywrightPage()
+		pwPage.OnConsole(func(msg playwright.ConsoleMessage) {
+			s.eventMu.Lock()
+			s.consoleMessages = append(s.consoleMessages, protocol.ConsoleEntry{
+				Type: msg.Type(),
+				Text: msg.Text(),
+			})
+			s.eventMu.Unlock()
+		})
+		pwPage.Context().OnRequest(func(req playwright.Request) {
+			s.eventMu.Lock()
+			s.networkEvents = append(s.networkEvents, protocol.NetworkEntry{
+				URL:          req.URL(),
+				Method:       req.Method(),
+				ResourceType: req.ResourceType(),
+				Timestamp:    time.Now().UnixMilli(),
+			})
+			s.eventMu.Unlock()
+		})
+		pwPage.Context().OnResponse(func(resp playwright.Response) {
+			s.eventMu.Lock()
+			url := resp.URL()
+			status := resp.Status()
+			for i := len(s.networkEvents) - 1; i >= 0; i-- {
+				if s.networkEvents[i].URL == url && s.networkEvents[i].Status == 0 {
+					s.networkEvents[i].Status = status
+					break
+				}
+			}
+			s.eventMu.Unlock()
+		})
+	}
+	s.mu.Unlock()
+
+	// Navigate back to original URL
+	if currentURL != "" && currentURL != "about:blank" {
+		if err := newInst.Page.Goto(currentURL); err != nil {
+			return nil, fmt.Errorf("failed to navigate back to original URL: %w", err)
+		}
+	}
+
 	return &protocol.CommandResult{
 		Success: true,
-		Message: "video recording started (requires headed mode; video saved on video-stop)",
+		Message: fmt.Sprintf("video recording started, saving to %s", videoDir),
 	}, nil
 }
 
-// cmdVideoStop stubs video recording stop.
+// cmdVideoStop stops video recording, saves the file, and restarts the session without recording.
 func (s *Server) cmdVideoStop(params json.RawMessage) (interface{}, error) {
 	var p protocol.TracingParams // reuse TracingParams for filename
 	if len(params) > 0 {
 		json.Unmarshal(params, &p)
 	}
-	msg := "video recording stopped"
-	if p.Filename != "" {
-		msg = "video recording stopped, saved to " + p.Filename
+
+	s.mu.Lock()
+	inst := s.currentSession
+	videoDir := s.videoDir
+	s.mu.Unlock()
+
+	if inst == nil {
+		return nil, ErrBrowserNotOpen
 	}
-	return &protocol.CommandResult{Success: true, Message: msg}, nil
+	if videoDir == "" {
+		return nil, fmt.Errorf("no video recording in progress")
+	}
+
+	// Get video path before closing
+	var videoPath string
+	if sbPage, ok := inst.Page.(*seleniumbase.Page); ok {
+		pwPage := sbPage.PlaywrightPage()
+		if video := pwPage.Video(); video != nil {
+			if path, err := video.Path(); err == nil {
+				videoPath = path
+			}
+		}
+	}
+
+	// Save current URL and config for restart
+	currentURL := inst.Page.URL()
+	sessionCfg := inst.Config
+
+	// Close session to finalize video
+	s.mu.Lock()
+	s.sessions.Close(sessionCfg.Name)
+	s.currentSession = nil
+	s.videoDir = ""
+	s.mu.Unlock()
+
+	// Determine output filename
+	dest := p.Filename
+	if dest == "" {
+		dest = fmt.Sprintf("video-%d.webm", time.Now().UnixMilli())
+	}
+
+	// Move or find the video file
+	if videoPath != "" {
+		// Wait a moment for file to be written
+		time.Sleep(500 * time.Millisecond)
+		if err := os.Rename(videoPath, dest); err != nil {
+			// Try copy if rename fails (cross-device)
+			if data, readErr := os.ReadFile(videoPath); readErr == nil {
+				os.WriteFile(dest, data, 0644)
+				os.Remove(videoPath)
+			}
+		}
+	} else if videoDir != "" {
+		// Look for any video file in the directory
+		entries, _ := os.ReadDir(videoDir)
+		for _, e := range entries {
+			if strings.HasSuffix(e.Name(), ".webm") || strings.HasSuffix(e.Name(), ".mp4") {
+				src := filepath.Join(videoDir, e.Name())
+				if err := os.Rename(src, dest); err != nil {
+					if data, readErr := os.ReadFile(src); readErr == nil {
+						os.WriteFile(dest, data, 0644)
+					}
+				}
+				break
+			}
+		}
+		os.RemoveAll(videoDir)
+	}
+
+	// Restart session without recording
+	var newInst *session.Instance
+	s.mu.Lock()
+	newCfg := &session.Config{
+		Name:        sessionCfg.Name,
+		Browser:     sessionCfg.Browser,
+		Headed:      sessionCfg.Headed,
+		Stealth:     sessionCfg.Stealth,
+		Persistent:  sessionCfg.Persistent,
+		Profile:     sessionCfg.Profile,
+		UserDataDir: sessionCfg.UserDataDir,
+	}
+	newInst, err := s.sessions.GetOrCreate(newCfg)
+	if err == nil {
+		s.currentSession = newInst
+		// Re-register event listeners
+		if sbPage, ok := newInst.Page.(*seleniumbase.Page); ok {
+			pwPage := sbPage.PlaywrightPage()
+			pwPage.OnConsole(func(msg playwright.ConsoleMessage) {
+				s.eventMu.Lock()
+				s.consoleMessages = append(s.consoleMessages, protocol.ConsoleEntry{
+					Type: msg.Type(),
+					Text: msg.Text(),
+				})
+				s.eventMu.Unlock()
+			})
+			pwPage.Context().OnRequest(func(req playwright.Request) {
+				s.eventMu.Lock()
+				s.networkEvents = append(s.networkEvents, protocol.NetworkEntry{
+					URL:          req.URL(),
+					Method:       req.Method(),
+					ResourceType: req.ResourceType(),
+					Timestamp:    time.Now().UnixMilli(),
+				})
+				s.eventMu.Unlock()
+			})
+			pwPage.Context().OnResponse(func(resp playwright.Response) {
+				s.eventMu.Lock()
+				url := resp.URL()
+				status := resp.Status()
+				for i := len(s.networkEvents) - 1; i >= 0; i-- {
+					if s.networkEvents[i].URL == url && s.networkEvents[i].Status == 0 {
+						s.networkEvents[i].Status = status
+						break
+					}
+				}
+				s.eventMu.Unlock()
+			})
+		}
+	}
+	s.mu.Unlock()
+
+	// Navigate back
+	if newInst != nil && currentURL != "" && currentURL != "about:blank" {
+		newInst.Page.Goto(currentURL)
+	}
+
+	return &protocol.CommandResult{
+		Success: true,
+		Message: fmt.Sprintf("video recording stopped, saved to %s", dest),
+	}, nil
 }
