@@ -6,16 +6,11 @@
 
 **sw** (Stealth Wright) is a browser automation CLI that provides:
 
-- **Playwright CLI-like UX** - Familiar commands and workflows
-- **Stealth Mode** - Built-in bot detection evasion
-- **Element References** - Snapshot-based element addressing (e1, e2...)
-- **Session Management** - Multiple isolated browser sessions
+- **Playwright CLI-compatible UX** - Familiar commands and output format
+- **Stealth Mode** - Built-in bot detection evasion via seleniumbase-go
+- **Element References** - ARIA snapshot with inline `[ref=eN]` addressing
+- **Session Management** - Multiple isolated browser sessions via daemon
 - **AI-Friendly** - Skill system for coding agents
-
-## Prerequisites
-
-- Go 1.22+
-- [seleniumbase-go](https://github.com/kyungw00k/seleniumbase-go) (sibling directory)
 
 ## Installation
 
@@ -37,10 +32,10 @@ go install ./cmd/sw
 # Open browser
 sw open https://example.com
 
-# Take snapshot (shows element references)
+# Take snapshot (shows ARIA tree with element references)
 sw snapshot
 
-# Interact with elements
+# Interact with elements using [ref=eN] references
 sw click e5
 sw fill e1 "user@example.com"
 
@@ -51,36 +46,133 @@ sw screenshot
 sw close
 ```
 
-## Commands
+## Snapshot Format
 
-### Core
+Snapshots use Playwright-compatible ARIA tree format with inline `[ref=eN]` element references:
+
+```yaml
+- heading "Example Domain" [level=1] [ref=e1]
+- paragraph [ref=e2]: This domain is for use in illustrative examples.
+- link "More information..." [ref=e3]
+```
+
+Use the ref value to target elements in subsequent commands:
 
 ```bash
-sw open [url]              # Open browser
-sw close                   # Close browser
-sw goto <url>              # Navigate to URL
-sw snapshot                # Generate element references
-sw click <ref>             # Click element
-sw fill <ref> <text>       # Fill text
-sw type <text>             # Type into focused element
-sw press <key>             # Press key
-sw hover <ref>             # Hover over element
-sw screenshot [filename]   # Take screenshot
+sw click e3
+sw fill e1 "search query"
 ```
+
+## Commands
 
 ### Navigation
 
 ```bash
+sw open [url]              # Open browser and navigate
+sw close                   # Close browser session
+sw goto <url>              # Navigate to URL
 sw go-back                 # Go back
 sw go-forward              # Go forward
 sw reload                  # Reload page
 ```
 
+### Snapshot & Screenshot
+
+```bash
+sw snapshot                # Generate ARIA snapshot with element refs
+sw screenshot [filename]   # Take screenshot
+sw pdf [filename]          # Save page as PDF
+```
+
+### Interaction
+
+```bash
+sw click <ref>             # Click element
+sw dblclick <ref>          # Double-click element
+sw hover <ref>             # Hover over element
+sw fill <ref> <text>       # Fill input field
+sw type <text>             # Type into focused element
+sw press <key>             # Press key (e.g. Enter, Tab)
+sw keydown <key>           # Key down event
+sw keyup <key>             # Key up event
+sw select <ref> <value>    # Select dropdown option
+sw check <ref>             # Check checkbox/radio
+sw uncheck <ref>           # Uncheck checkbox
+sw upload <ref> <file>     # Upload file
+sw drag <src> <dst>        # Drag and drop
+sw eval <script>           # Evaluate JavaScript
+```
+
+### Mouse
+
+```bash
+sw mousemove <x> <y>       # Move mouse
+sw mousedown <x> <y>       # Mouse button down
+sw mouseup <x> <y>         # Mouse button up
+sw mousewheel <x> <y>      # Mouse wheel scroll
+```
+
+### Dialogs
+
+```bash
+sw dialog-accept [text]    # Accept dialog (with optional input)
+sw dialog-dismiss          # Dismiss dialog
+```
+
+### Tabs
+
+```bash
+sw tab-list                # List open tabs
+sw tab-new [url]           # Open new tab
+sw tab-close [index]       # Close tab
+sw tab-select <index>      # Switch to tab
+```
+
+### Cookies
+
+```bash
+sw cookie-list             # List all cookies
+sw cookie-get <name>       # Get cookie by name
+sw cookie-set <name> <value> [--domain] [--path] [--expires] [--httpOnly] [--secure] [--sameSite]
+sw cookie-delete <name>    # Delete cookie
+sw cookie-clear            # Clear all cookies
+```
+
+### Local Storage
+
+```bash
+sw localstorage-list       # List all entries
+sw localstorage-get <key>  # Get value
+sw localstorage-set <key> <value>  # Set value
+sw localstorage-delete <key>       # Delete entry
+sw localstorage-clear      # Clear all entries
+```
+
+### Session Storage
+
+```bash
+sw sessionstorage-list     # List all entries
+sw sessionstorage-get <key>  # Get value
+sw sessionstorage-set <key> <value>  # Set value
+sw sessionstorage-delete <key>       # Delete entry
+sw sessionstorage-clear    # Clear all entries
+```
+
+### State & Data
+
+```bash
+sw state-save [path]       # Save browser state to file
+sw state-load [path]       # Load browser state from file
+sw delete-data             # Clear all browser data
+sw resize <width> <height> # Resize browser window
+```
+
 ### Session Management
 
 ```bash
-sw list                    # List sessions
-sw -s=auth open <url>      # Named session
+sw list                    # List all sessions
+sw kill-all                # Kill all browser sessions
+sw close-all               # Close all browser sessions
 sw daemon start            # Start daemon manually
 sw daemon stop             # Stop daemon
 sw daemon status           # Check daemon status
@@ -101,14 +193,13 @@ sw daemon status           # Check daemon status
 
 ## Stealth Features
 
-- **Fingerprint Randomization** - Browser fingerprint spoofing
-- **User-Agent Spoofing** - Custom UA strings
-- **WebGL Renderer Spoofing** - GPU info spoofing
-- **Canvas Fingerprint** - Noise injection
-- **WebRTC Leak Prevention** - IP leak protection
-- **Hide WebDriver** - Remove automation markers
-- **Human-like Typing** - Realistic typing behavior
-- **Random Delays** - Natural timing
+Stealth mode is powered by [seleniumbase-go](https://github.com/kyungw00k/seleniumbase-go) which launches Chrome with fingerprint evasion arguments:
+
+- Hide WebDriver automation markers
+- Randomized browser fingerprints
+- Custom User-Agent strings
+- WebGL and Canvas fingerprint spoofing
+- WebRTC leak prevention
 
 ## Architecture
 
@@ -118,10 +209,8 @@ sw (Stealth Wright)
 ├── CLI (cobra)                    # Command-line interface
 ├── Daemon (Unix socket)           # Background browser process
 ├── Browser Abstraction Layer      # Pluggable browser backends
-│   ├── seleniumbase-go (current)
-│   ├── playwright-go (planned)
-│   └── rod (planned)
-└── Stealth Module                 # Bot detection evasion
+│   └── seleniumbase-go (current)  # Playwright + stealth via seleniumbase-go
+└── Snapshot Generator             # ARIA tree with [ref=eN] annotations
 ```
 
 ### Protocol
@@ -153,11 +242,11 @@ Skill location: skills/sw/SKILL.md
 ```
 User: Use sw to open example.com and click the first link
 
-Claude: 
+Claude:
 1. sw open https://example.com
 2. sw snapshot
-3. Parse snapshot to find first link (e.g., e3)
-4. sw click e3
+   → - link "More information..." [ref=e3]
+3. sw click e3
 ```
 
 ## Comparison
@@ -166,21 +255,25 @@ Claude:
 |---------|---------------|-----|
 | Daemon Sessions | ✅ | ✅ |
 | Element References | ✅ | ✅ |
+| ARIA Snapshot Format | ✅ | ✅ |
 | Stealth Mode | ❌ | ✅ |
 | AI Skills | ✅ | ✅ |
 | Go Native | ❌ | ✅ |
-| Plugin Backends | ❌ | ✅ |
 
 ## Development
 
 ```bash
-# Run tests
-go test ./...
-
 # Build
 go build -o bin/sw ./cmd/sw
 
-# Run linter
+# Run unit tests
+go test ./...
+
+# Run integration tests (requires built binary)
+go build -o bin/sw ./cmd/sw
+go test -tags integration -v ./test/...
+
+# Lint
 go vet ./...
 
 # Format
@@ -191,18 +284,17 @@ go fmt ./...
 
 ```
 sw/
-├── cmd/sw/main.go              # CLI entry point
+├── cmd/sw/main.go              # CLI entry point (cobra commands)
 ├── internal/
-│   ├── browser/                # Browser interface (abstraction)
-│   ├── client/                 # Daemon client
-│   ├── daemon/                 # Daemon server
-│   ├── drivers/seleniumbase/   # seleniumbase-go implementation
-│   ├── session/                # Session management
-│   ├── snapshot/               # Element reference generator
-│   └── stealth/                # Stealth module
-├── pkg/protocol/               # JSON-RPC types
-├── skills/sw/SKILL.md          # AI skill file
-├── ARCHITECTURE.md             # Architecture documentation
+│   ├── browser/                # Browser interface abstraction
+│   ├── client/                 # Daemon JSON-RPC client
+│   ├── daemon/                 # Daemon server + command handlers
+│   ├── drivers/seleniumbase/   # seleniumbase-go driver implementation
+│   ├── session/                # Session lifecycle management
+│   └── snapshot/               # ARIA snapshot + [ref=eN] annotation
+├── pkg/protocol/               # JSON-RPC request/response types
+├── skills/sw/SKILL.md          # AI agent skill file
+├── test/                       # Integration tests
 └── README.md
 ```
 
