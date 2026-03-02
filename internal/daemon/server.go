@@ -36,6 +36,7 @@ type Server struct {
 	consoleMessages []protocol.ConsoleEntry
 	networkEvents   []protocol.NetworkEntry
 	activeRoutes    []protocol.RouteEntry
+	videoDir        string
 }
 
 // Config is the server configuration.

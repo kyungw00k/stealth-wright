@@ -26,6 +26,7 @@ type Config struct {
 	ViewportWidth  int
 	ViewportHeight int
 	UserDataDir    string
+	RecordVideo    string
 }
 
 // NewDriver creates a new seleniumbase-go driver.
@@ -113,6 +114,9 @@ func (c *Config) toSBOptions() []sb.Option {
 	}
 	if c.UserDataDir != "" {
 		opts = append(opts, sb.WithUserDataDir(c.UserDataDir))
+	}
+	if c.RecordVideo != "" {
+		opts = append(opts, sb.WithRecordVideo(c.RecordVideo))
 	}
 
 	return opts

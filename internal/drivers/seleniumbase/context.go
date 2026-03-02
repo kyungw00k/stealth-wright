@@ -51,6 +51,11 @@ func WithUserDataDir(dir string) Option {
 	return func(c *Config) { c.UserDataDir = dir }
 }
 
+// WithRecordVideo sets the video recording directory.
+func WithRecordVideo(dir string) Option {
+	return func(c *Config) { c.RecordVideo = dir }
+}
+
 // Context wraps playwright.BrowserContext to implement browser.Context.
 type Context struct {
 	pwCtx playwright.BrowserContext

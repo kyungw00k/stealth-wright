@@ -20,6 +20,7 @@ type Config struct {
 	Persistent  bool
 	Profile     string
 	UserDataDir string
+	RecordVideo string
 }
 
 // Instance represents a browser session instance.
@@ -71,6 +72,9 @@ func (m *Manager) GetOrCreate(cfg *Config) (*Instance, error) {
 	} else if cfg.Persistent {
 		profileDir := filepath.Join(m.baseDir, "profiles", fmt.Sprintf("ud-%s", cfg.Name))
 		driverOpts = append(driverOpts, seleniumbase.WithUserDataDir(profileDir))
+	}
+	if cfg.RecordVideo != "" {
+		driverOpts = append(driverOpts, seleniumbase.WithRecordVideo(cfg.RecordVideo))
 	}
 
 	b, err := seleniumbase.NewDriver(driverOpts...)
