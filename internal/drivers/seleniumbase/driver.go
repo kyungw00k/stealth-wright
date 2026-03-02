@@ -27,6 +27,7 @@ type Config struct {
 	ViewportHeight int
 	UserDataDir    string
 	RecordVideo    string
+	Device         string
 }
 
 // NewDriver creates a new seleniumbase-go driver.
@@ -94,17 +95,32 @@ func defaultConfig() *Config {
 	}
 }
 
+// channelBrowsers are browser values that are actually Playwright channels of chromium.
+var channelBrowsers = map[string]bool{
+	"chrome": true, "chrome-beta": true, "chrome-dev": true, "chrome-canary": true,
+	"msedge": true, "msedge-beta": true, "msedge-dev": true, "msedge-canary": true,
+}
+
 // Convert to seleniumbase-go options
 func (c *Config) toSBOptions() []sb.Option {
+	browser := c.Browser
+	channel := c.Channel
+
+	// Map channel names (e.g. "chrome") to browser=chromium + channel=<name>
+	if channelBrowsers[browser] {
+		channel = browser
+		browser = "chromium"
+	}
+
 	opts := []sb.Option{
-		sb.WithBrowser(c.Browser),
+		sb.WithBrowser(browser),
 		sb.WithHeadless(c.Headless),
 		sb.WithStealth(c.Stealth),
 		sb.WithViewportSize(c.ViewportWidth, c.ViewportHeight),
 	}
 
-	if c.Channel != "" {
-		opts = append(opts, sb.WithChannel(c.Channel))
+	if channel != "" {
+		opts = append(opts, sb.WithChannel(channel))
 	}
 	if c.Proxy != "" {
 		opts = append(opts, sb.WithProxy(c.Proxy))
@@ -117,6 +133,9 @@ func (c *Config) toSBOptions() []sb.Option {
 	}
 	if c.RecordVideo != "" {
 		opts = append(opts, sb.WithRecordVideo(c.RecordVideo))
+	}
+	if c.Device != "" {
+		opts = append(opts, sb.WithDevice(c.Device))
 	}
 
 	return opts

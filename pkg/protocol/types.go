@@ -78,6 +78,7 @@ type OpenParams struct {
 	Browser string `json:"browser,omitempty"`
 	Headed  bool   `json:"headed,omitempty"`
 	Stealth bool   `json:"stealth,omitempty"`
+	Device  string `json:"device,omitempty"`
 }
 
 // GotoParams represents parameters for the goto command.
@@ -222,11 +223,14 @@ type PageResult struct {
 
 // SnapshotResult represents snapshot result.
 type SnapshotResult struct {
-	PageURL      string        `json:"pageUrl"`
-	PageTitle    string        `json:"pageTitle"`
-	AriaSnapshot string        `json:"ariaSnapshot,omitempty"` // Playwright native aria snapshot with refs
-	Elements     []ElementInfo `json:"elements"`
-	Filename     string        `json:"filename,omitempty"`
+	PageURL         string        `json:"pageUrl"`
+	PageTitle       string        `json:"pageTitle"`
+	AriaSnapshot    string        `json:"ariaSnapshot,omitempty"` // Playwright native aria snapshot with refs
+	Elements        []ElementInfo `json:"elements"`
+	Filename        string        `json:"filename,omitempty"`
+	ConsoleErrors   int           `json:"consoleErrors,omitempty"`
+	ConsoleWarnings int           `json:"consoleWarnings,omitempty"`
+	ConsoleLogFile  string        `json:"consoleLogFile,omitempty"` // path to new console entries log
 }
 
 // SnapshotParams represents parameters for the snapshot command.

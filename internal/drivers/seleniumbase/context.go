@@ -56,6 +56,11 @@ func WithRecordVideo(dir string) Option {
 	return func(c *Config) { c.RecordVideo = dir }
 }
 
+// WithDevice sets the device to emulate (e.g., "iPhone 15", "Pixel 7").
+func WithDevice(name string) Option {
+	return func(c *Config) { c.Device = name }
+}
+
 // Context wraps playwright.BrowserContext to implement browser.Context.
 type Context struct {
 	pwCtx playwright.BrowserContext

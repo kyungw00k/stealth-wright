@@ -21,6 +21,7 @@ type Config struct {
 	Profile     string
 	UserDataDir string
 	RecordVideo string
+	Device      string
 }
 
 // Instance represents a browser session instance.
@@ -75,6 +76,9 @@ func (m *Manager) GetOrCreate(cfg *Config) (*Instance, error) {
 	}
 	if cfg.RecordVideo != "" {
 		driverOpts = append(driverOpts, seleniumbase.WithRecordVideo(cfg.RecordVideo))
+	}
+	if cfg.Device != "" {
+		driverOpts = append(driverOpts, seleniumbase.WithDevice(cfg.Device))
 	}
 
 	b, err := seleniumbase.NewDriver(driverOpts...)
