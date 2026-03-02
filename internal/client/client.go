@@ -335,6 +335,25 @@ func (c *Client) Hover(ref string) (*protocol.CommandResult, error) {
 	return &result, nil
 }
 
+// Check checks a checkbox or radio button.
+func (c *Client) Check(ref string) (*protocol.CommandResult, error) {
+	resp, err := c.Call("check", &protocol.ClickParams{Ref: ref})
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.Error != nil {
+		return nil, fmt.Errorf("%s", resp.Error.Message)
+	}
+
+	var result protocol.CommandResult
+	if err := json.Unmarshal(resp.Result, &result); err != nil {
+		return nil, err
+	}
+
+	return &result, nil
+}
+
 // Screenshot takes a screenshot.
 func (c *Client) Screenshot() (*protocol.CommandResult, error) {
 	resp, err := c.Call("screenshot", nil)

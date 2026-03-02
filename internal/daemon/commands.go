@@ -56,6 +56,7 @@ func (s *Server) registerCommands() {
 	s.commands.Register("type", s.cmdType)
 	s.commands.Register("press", s.cmdPress)
 	s.commands.Register("hover", s.cmdHover)
+	s.commands.Register("check", s.cmdCheck)
 	s.commands.Register("screenshot", s.cmdScreenshot)
 	s.commands.Register("eval", s.cmdEval)
 	s.commands.Register("list", s.cmdList)
@@ -320,6 +321,39 @@ func (s *Server) cmdFill(params json.RawMessage) (interface{}, error) {
 	}
 
 	if err := inst.Page.Fill(selector, p.Text); err != nil {
+		return nil, err
+	}
+
+	return &protocol.CommandResult{Success: true}, nil
+}
+
+func (s *Server) cmdCheck(params json.RawMessage) (interface{}, error) {
+	inst, err := s.requireSession()
+	if err != nil {
+		return nil, err
+	}
+
+	var p protocol.ClickParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, err
+	}
+
+	selector, err := s.resolveSelector(p.Ref)
+	if err != nil {
+		return nil, err
+	}
+
+	// Use JavaScript to check the checkbox/radio
+	script := `(() => {
+		const el = document.querySelector('` + selector + `');
+		if (el && (el.type === 'checkbox' || el.type === 'radio')) {
+			el.checked = true;
+			el.dispatchEvent(new Event('change', { bubbles: true }));
+		}
+	})()`
+
+	_, err = inst.Page.Evaluate(script)
+	if err != nil {
 		return nil, err
 	}
 

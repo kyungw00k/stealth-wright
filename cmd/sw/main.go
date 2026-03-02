@@ -62,6 +62,7 @@ undetected browser automation.`,
 		newReloadCmd(),
 		newSnapshotCmd(),
 		newClickCmd(),
+		newCheckCmd(),
 		newFillCmd(),
 		newTypeCmd(),
 		newPressCmd(),
@@ -354,6 +355,28 @@ func newFillCmd() *cobra.Command {
 			}
 
 			result, err := cli.Fill(args[0], args[1])
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+
+			printResult(result)
+		},
+	}
+}
+
+func newCheckCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "check <ref>",
+		Short: "Check checkbox or radio button",
+		Args:  cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensureDaemon(); err != nil {
+				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
+				os.Exit(1)
+			}
+
+			result, err := cli.Check(args[0])
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "Error:", err)
 				os.Exit(1)
