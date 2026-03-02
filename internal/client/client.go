@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/kyungw00k/sw/pkg/protocol"
@@ -155,29 +154,21 @@ func (c *Client) StartDaemon(daemonPath string) error {
 		return nil
 	}
 
-	// Start daemon process in background (detached)
+	// Start daemon process in background
 	cmd := exec.Command(daemonPath, "daemon", "start")
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	cmd.Stdin = nil
 
-	// Detach from parent process group
-	if cmd.SysProcAttr == nil {
-		cmd.SysProcAttr = &syscall.SysProcAttr{}
-	}
-	cmd.SysProcAttr.Setpgid = true
-	cmd.SysProcAttr.Noctty = true
-
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start daemon: %w", err)
 	}
 
-	// Release the process so it can continue after parent exits
-	if err := cmd.Process.Release(); err != nil {
-		return fmt.Errorf("failed to release daemon: %w", err)
-	}
+	// Don't wait for the daemon - let it run independently
+	// Release the process so it continues after parent exits
+	_ = cmd.Process.Release()
 
-	// Wait for daemon to start
+	// Wait for daemon to be ready
 	for i := 0; i < 50; i++ {
 		time.Sleep(100 * time.Millisecond)
 		if c.CanConnect() {
