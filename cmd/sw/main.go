@@ -1,14 +1,20 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/kyungw00k/sw/internal/client"
+	"github.com/kyungw00k/sw/internal/daemon"
 	"github.com/kyungw00k/sw/pkg/protocol"
+	"github.com/kyungw00k/sw/skills"
+	playwright "github.com/playwright-community/playwright-go"
 	"github.com/spf13/cobra")
 
 var (
@@ -36,15 +42,10 @@ It provides Playwright CLI-like UX with built-in stealth mode for
 undetected browser automation.`,
 		Version: "0.1.0",
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
-			// Initialize client
+			// Initialize client — each session routes to its own socket
 			cli = client.NewClient(&client.Config{
-				SocketPath: client.DefaultSocketPath(),
+				SocketPath: client.DefaultSocketPath(sessionName),
 			})
-
-			// Override session name from environment variable
-			if envSession := os.Getenv("PLAYWRIGHT_CLI_SESSION"); envSession != "" {
-				sessionName = envSession
-			}
 
 			if noStealthMode {
 				stealthMode = false
@@ -52,14 +53,14 @@ undetected browser automation.`,
 		},
 	}
 
-	// Global flags
-	rootCmd.PersistentFlags().StringVarP(&sessionName, "session", "s", "default", "Session name")
-	rootCmd.PersistentFlags().StringVarP(&browserType, "browser", "b", "chromium", "Browser type (chromium, firefox, webkit)")
-	rootCmd.PersistentFlags().BoolVar(&headed, "headed", false, "Run in headed mode")
+	// Global flags — defaults fall back to SW_* env vars
+	rootCmd.PersistentFlags().StringVarP(&sessionName, "session", "s", envStr("SW_SESSION", envStr("PLAYWRIGHT_CLI_SESSION", "default")), "Session name (env: SW_SESSION)")
+	rootCmd.PersistentFlags().StringVarP(&browserType, "browser", "b", envStr("SW_BROWSER", "chrome"), "Browser type: chrome, chromium, firefox, webkit (env: SW_BROWSER)")
+	rootCmd.PersistentFlags().BoolVar(&headed, "headed", envBool("SW_HEADED", false), "Run in headed mode (env: SW_HEADED)")
 	rootCmd.PersistentFlags().BoolVar(&persistent, "persistent", false, "Persist browser profile to disk")
-	rootCmd.PersistentFlags().StringVar(&profile, "profile", "", "Custom profile directory")
+	rootCmd.PersistentFlags().StringVar(&profile, "profile", envStr("SW_PROFILE", ""), "Custom profile directory (env: SW_PROFILE)")
 	rootCmd.PersistentFlags().StringVar(&configFile, "config", "", "Config file path")
-	rootCmd.PersistentFlags().BoolVar(&stealthMode, "stealth", true, "Enable stealth mode")
+	rootCmd.PersistentFlags().BoolVar(&stealthMode, "stealth", envBool("SW_STEALTH", true), "Enable stealth mode (env: SW_STEALTH)")
 	rootCmd.PersistentFlags().BoolVar(&noStealthMode, "no-stealth", false, "Disable stealth mode")
 
 	// Add commands
@@ -129,14 +130,41 @@ undetected browser automation.`,
 		newRouteListCmd(),
 		newUnrouteCmd(),
 		newInstallCmd(),
+		newDevicesCmd(),
 		newVideoStartCmd(),
 		newVideoStopCmd(),
+		newDaemonCmd(),
 	)
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+// envStr returns the value of an environment variable, or defaultVal if unset/empty.
+func envStr(key, defaultVal string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return defaultVal
+}
+
+// envBool parses a boolean environment variable.
+// Truthy: "1", "true", "yes". Falsy: "0", "false", "no".
+// Returns defaultVal if the variable is unset or empty.
+func envBool(key string, defaultVal bool) bool {
+	v := os.Getenv(key)
+	if v == "" {
+		return defaultVal
+	}
+	switch strings.ToLower(v) {
+	case "1", "true", "yes":
+		return true
+	case "0", "false", "no":
+		return false
+	}
+	return defaultVal
 }
 
 // ensureDaemon ensures the daemon is running
@@ -151,7 +179,86 @@ func ensureDaemon() error {
 		return fmt.Errorf("failed to get executable path: %w", err)
 	}
 
-	return cli.StartDaemon(execPath)
+	return cli.StartDaemon(execPath, sessionName)
+}
+
+// newDaemonCmd returns the daemon command group.
+func newDaemonCmd() *cobra.Command {
+	daemonCmd := &cobra.Command{
+		Use:   "daemon",
+		Short: "Manage the background daemon",
+	}
+	daemonCmd.AddCommand(newDaemonStartCmd(), newDaemonStopCmd(), newDaemonStatusCmd())
+	return daemonCmd
+}
+
+func newDaemonStartCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "start",
+		Short: "Start the daemon",
+		Run: func(cmd *cobra.Command, args []string) {
+			socketPath := client.DefaultSocketPath(sessionName)
+			if daemon.IsRunning(socketPath) {
+				w := bufio.NewWriter(os.Stdout)
+				daemon.WriteSuccess(w, fmt.Sprintf("Daemon already listening on %s", socketPath))
+				return
+			}
+			srv, err := daemon.NewServer(&daemon.Config{
+				SocketPath: socketPath,
+				BaseDir:    client.DefaultBaseDir(),
+			})
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "failed to create daemon:", err)
+				os.Exit(1)
+			}
+			if err := srv.Start(); err != nil {
+				fmt.Fprintln(os.Stderr, "failed to start daemon:", err)
+				os.Exit(1)
+			}
+			w := bufio.NewWriter(os.Stdout)
+			daemon.WriteSuccess(w, fmt.Sprintf("Daemon listening on %s", socketPath))
+			srv.WaitForShutdown()
+		},
+	}
+}
+
+func newDaemonStopCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "stop",
+		Short: "Stop the daemon",
+		Run: func(cmd *cobra.Command, args []string) {
+			socketPath := client.DefaultSocketPath(sessionName)
+			if !daemon.IsRunning(socketPath) {
+				fmt.Println("Daemon is not running.")
+				return
+			}
+			c := client.NewClient(&client.Config{SocketPath: socketPath})
+			if err := c.Connect(); err != nil {
+				fmt.Fprintln(os.Stderr, "failed to connect to daemon:", err)
+				os.Exit(1)
+			}
+			defer c.Disconnect()
+			if _, err := c.Call("stop", nil); err != nil {
+				fmt.Fprintln(os.Stderr, "stop error:", err)
+				os.Exit(1)
+			}
+			fmt.Println("Daemon stopped.")
+		},
+	}
+}
+
+func newDaemonStatusCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "status",
+		Short: "Show daemon status",
+		Run: func(cmd *cobra.Command, args []string) {
+			if daemon.IsRunning(client.DefaultSocketPath(sessionName)) {
+				fmt.Println("Daemon is running.")
+			} else {
+				fmt.Println("Daemon is not running.")
+			}
+		},
+	}
 }
 
 // printResult prints a command result
@@ -168,14 +275,34 @@ func printResult(result *protocol.CommandResult) {
 
 // printSnapshot prints a snapshot result in playwright-cli format (file link only).
 func printSnapshot(result *protocol.SnapshotResult) {
+	cwd, _ := os.Getwd()
+
 	fmt.Println("### Page")
 	fmt.Printf("- Page URL: %s\n", result.PageURL)
 	fmt.Printf("- Page Title: %s\n", result.PageTitle)
+	fmt.Printf("- Console: %d errors, %d warnings\n", result.ConsoleErrors, result.ConsoleWarnings)
 
 	if result.Filename != "" {
+		relPath := toRelPath(cwd, result.Filename)
 		fmt.Println("\n### Snapshot")
-		fmt.Printf("- [Snapshot](%s)\n", result.Filename)
+		fmt.Printf("- [Snapshot](%s)\n", relPath)
 	}
+
+	if result.ConsoleLogFile != "" {
+		relLogPath := toRelPath(cwd, result.ConsoleLogFile)
+		fmt.Println("\n### Events")
+		fmt.Printf("- New console entries: %s#L1\n", relLogPath)
+	}
+}
+
+// toRelPath converts an absolute path to a relative path from base.
+// Falls back to the original path if conversion fails.
+func toRelPath(base, path string) string {
+	rel, err := filepath.Rel(base, path)
+	if err != nil {
+		return path
+	}
+	return rel
 }
 
 // printSnapshotVerbose prints a snapshot with inline ARIA tree content.
@@ -204,7 +331,8 @@ func printBrowserOpened(sessionName, browserType, userDataDir string, headed boo
 }
 
 func newOpenCmd() *cobra.Command {
-	return &cobra.Command{
+	device := envStr("SW_DEVICE", "")
+	cmd := &cobra.Command{
 		Use:   "open [url]",
 		Short: "Open browser and optionally navigate to URL",
 		Args:  cobra.MaximumNArgs(1),
@@ -219,11 +347,16 @@ func newOpenCmd() *cobra.Command {
 				url = args[0]
 			}
 
-			result, err := cli.Open(url,
+			openOpts := []client.OpenOption{
 				client.WithHeaded(headed),
 				client.WithBrowser(browserType),
 				client.WithStealth(stealthMode),
-			)
+			}
+			if device != "" {
+				openOpts = append(openOpts, client.WithDevice(device))
+			}
+
+			result, err := cli.Open(url, openOpts...)
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "Error:", err)
 				os.Exit(1)
@@ -243,6 +376,8 @@ func newOpenCmd() *cobra.Command {
 			}
 		},
 	}
+	cmd.Flags().StringVar(&device, "device", device, `device to emulate, e.g. "iPhone 15", "Pixel 7" (env: SW_DEVICE)`)
+	return cmd
 }
 
 func newCloseCmd() *cobra.Command {
@@ -2126,24 +2261,72 @@ func newUnrouteCmd() *cobra.Command {
 }
 
 func newInstallCmd() *cobra.Command {
-	var skills bool
+	var installSkills bool
 	cmd := &cobra.Command{
 		Use:   "install",
 		Short: "Initialize workspace",
 		Run: func(cmd *cobra.Command, args []string) {
-			if skills {
-				if err := os.MkdirAll("skills", 0755); err != nil {
-					fmt.Fprintln(os.Stderr, "Error:", err)
+			if installSkills {
+				// Install sw skill files to .claude/skills/sw/
+				destDir := filepath.Join(".claude", "skills", "sw")
+				if err := os.MkdirAll(destDir, 0755); err != nil {
+					fmt.Fprintln(os.Stderr, "Error creating skills directory:", err)
 					os.Exit(1)
 				}
-				fmt.Println("skills directory created")
+				entries, err := skills.Files.ReadDir("sw")
+				if err != nil {
+					fmt.Fprintln(os.Stderr, "Error reading embedded skills:", err)
+					os.Exit(1)
+				}
+				for _, e := range entries {
+					if e.IsDir() {
+						continue
+					}
+					content, err := skills.Files.ReadFile("sw/" + e.Name())
+					if err != nil {
+						fmt.Fprintln(os.Stderr, "Error reading skill file:", err)
+						os.Exit(1)
+					}
+					dest := filepath.Join(destDir, e.Name())
+					if err := os.WriteFile(dest, content, 0644); err != nil {
+						fmt.Fprintln(os.Stderr, "Error writing skill file:", err)
+						os.Exit(1)
+					}
+					fmt.Println("Installed:", dest)
+				}
+				fmt.Println("Skills installed to", destDir)
 			} else {
 				fmt.Println("workspace initialized")
 			}
 		},
 	}
-	cmd.Flags().BoolVar(&skills, "skills", false, "install skills for claude / github copilot")
+	cmd.Flags().BoolVar(&installSkills, "skills", false, "install skills for claude / github copilot")
 	return cmd
+}
+
+func newDevicesCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "devices",
+		Short: "List available devices for emulation",
+		Args:  cobra.NoArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			pw, err := playwright.Run()
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			defer pw.Stop()
+
+			names := make([]string, 0, len(pw.Devices))
+			for name := range pw.Devices {
+				names = append(names, name)
+			}
+			sort.Strings(names)
+			for _, name := range names {
+				fmt.Println(name)
+			}
+		},
+	}
 }
 
 func newVideoStartCmd() *cobra.Command {

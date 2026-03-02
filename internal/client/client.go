@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -149,14 +150,25 @@ func (c *Client) connectLocked() error {
 }
 
 // StartDaemon starts the daemon if not running.
-func (c *Client) StartDaemon(daemonPath string) error {
+// sessionName is passed to the subprocess so it listens on the correct socket.
+func (c *Client) StartDaemon(daemonPath, sessionName string) error {
 	if c.CanConnect() {
 		return nil
 	}
 
-	// Start daemon process in background
-	cmd := exec.Command(daemonPath, "daemon", "start")
-	cmd.Stdout = nil
+	// Build args: pass --session so the subprocess uses the right socket path.
+	cmdArgs := []string{}
+	if sessionName != "" && sessionName != "default" {
+		cmdArgs = append(cmdArgs, "--session", sessionName)
+	}
+	cmdArgs = append(cmdArgs, "daemon", "start")
+
+	// Start daemon process in background, capturing stdout for readiness signal
+	cmd := exec.Command(daemonPath, cmdArgs...)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("failed to pipe daemon stdout: %w", err)
+	}
 	cmd.Stderr = nil
 	cmd.Stdin = nil
 
@@ -164,19 +176,47 @@ func (c *Client) StartDaemon(daemonPath string) error {
 		return fmt.Errorf("failed to start daemon: %w", err)
 	}
 
-	// Don't wait for the daemon - let it run independently
-	// Release the process so it continues after parent exits
-	_ = cmd.Process.Release()
-
-	// Wait for daemon to be ready
-	for i := 0; i < 50; i++ {
-		time.Sleep(100 * time.Millisecond)
-		if c.CanConnect() {
-			return nil
+	// Read readiness signal from stdout (### Success ... <EOF>)
+	ready := make(chan error, 1)
+	go func() {
+		buf := make([]byte, 4096)
+		var output string
+		for {
+			n, err := stdout.Read(buf)
+			if n > 0 {
+				output += string(buf[:n])
+				if strings.Contains(output, "<EOF>") {
+					if strings.Contains(output, "### Success") {
+						ready <- nil
+					} else {
+						ready <- fmt.Errorf("daemon reported error: %s", output)
+					}
+					return
+				}
+			}
+			if err != nil {
+				// Process closed stdout without sending signal; fall back to connect check
+				ready <- nil
+				return
+			}
 		}
+	}()
+
+	// Wait for readiness signal or timeout
+	select {
+	case err := <-ready:
+		if err != nil {
+			_ = cmd.Process.Kill()
+			return err
+		}
+	case <-time.After(10 * time.Second):
+		_ = cmd.Process.Kill()
+		return fmt.Errorf("daemon did not start in time")
 	}
 
-	return fmt.Errorf("daemon did not start in time")
+	// Release the process so it continues after parent exits
+	_ = cmd.Process.Release()
+	return nil
 }
 
 // Convenience methods for common commands
@@ -231,6 +271,13 @@ func WithBrowser(browser string) OpenOption {
 func WithStealth(stealth bool) OpenOption {
 	return func(p *protocol.OpenParams) {
 		p.Stealth = stealth
+	}
+}
+
+// WithDevice sets the device to emulate.
+func WithDevice(device string) OpenOption {
+	return func(p *protocol.OpenParams) {
+		p.Device = device
 	}
 }
 
@@ -441,16 +488,19 @@ type SessionInfo struct {
 	Persistent bool   `json:"persistent"`
 }
 
-// DefaultSocketPath returns the default socket path.
-func DefaultSocketPath() string {
-	// Use hash of current directory for isolation
+// DefaultSocketPath returns the socket path for the given session name.
+// Each named session gets its own socket, mirroring playwright-cli's per-session daemon model.
+func DefaultSocketPath(sessionName string) string {
+	if sessionName == "" {
+		sessionName = "default"
+	}
 	cwd, _ := os.Getwd()
 	hash := fmt.Sprintf("%08x", len(cwd))
-	return filepath.Join(os.TempDir(), "sw", hash, "default.sock")
+	return filepath.Join(os.TempDir(), "sw", hash, sessionName+".sock")
 }
 
-// DefaultBaseDir returns the default base directory.
+// DefaultBaseDir returns the default base directory (CWD-relative .sw).
 func DefaultBaseDir() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".sw")
+	cwd, _ := os.Getwd()
+	return filepath.Join(cwd, ".sw")
 }
