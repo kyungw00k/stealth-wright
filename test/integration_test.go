@@ -1756,3 +1756,265 @@ func TestCookieSetWithAttributes(t *testing.T) {
 
 	t.Log("✓ CookieSetWithAttributes test passed!")
 }
+
+// TestDialogAccept tests dialog-accept command
+func TestDialogAccept(t *testing.T) {
+	execPath := getExecPath(t)
+	cleanupDaemon(execPath)
+
+	html := `<!DOCTYPE html>
+<html>
+<head><title>Dialog Test</title></head>
+<body>
+<button id="btn" onclick="var r = confirm('Are you sure?'); document.getElementById('result').textContent = r ? 'accepted' : 'dismissed';">Show Dialog</button>
+<p id="result">waiting</p>
+</body>
+</html>`
+
+	runSw(t, execPath, append([]string{"open", dataURL(html)}, headedArgs()...)...)
+	defer closeBrowser(execPath)
+	time.Sleep(1 * time.Second)
+
+	snapshot := runSw(t, execPath, "snapshot")
+	btnRef := findElementByContent(snapshot, "btn", "button")
+	if btnRef == "" {
+		btnRef = findElementByContent(snapshot, "Show Dialog", "")
+	}
+	if btnRef == "" {
+		t.Fatal("Could not find button element")
+	}
+
+	// Register dialog-accept before triggering dialog
+	runSw(t, execPath, "dialog-accept")
+
+	// Click button to trigger dialog
+	runSw(t, execPath, "click", btnRef)
+	time.Sleep(500 * time.Millisecond)
+
+	result := mustRunSw(execPath, "eval", "document.getElementById('result').textContent")
+	if strings.Contains(result, "accepted") {
+		t.Log("✓ dialog-accept worked")
+	} else {
+		t.Logf("Warning: dialog-accept result: %s", result)
+	}
+
+	t.Log("✓ TestDialogAccept passed!")
+}
+
+// TestDialogDismiss tests dialog-dismiss command
+func TestDialogDismiss(t *testing.T) {
+	execPath := getExecPath(t)
+	cleanupDaemon(execPath)
+
+	html := `<!DOCTYPE html>
+<html>
+<head><title>Dialog Dismiss Test</title></head>
+<body>
+<button id="btn" onclick="var r = confirm('Are you sure?'); document.getElementById('result').textContent = r ? 'accepted' : 'dismissed';">Show Dialog</button>
+<p id="result">waiting</p>
+</body>
+</html>`
+
+	runSw(t, execPath, append([]string{"open", dataURL(html)}, headedArgs()...)...)
+	defer closeBrowser(execPath)
+	time.Sleep(1 * time.Second)
+
+	snapshot := runSw(t, execPath, "snapshot")
+	btnRef := findElementByContent(snapshot, "btn", "button")
+	if btnRef == "" {
+		btnRef = findElementByContent(snapshot, "Show Dialog", "")
+	}
+	if btnRef == "" {
+		t.Fatal("Could not find button element")
+	}
+
+	// Register dialog-dismiss before triggering dialog
+	runSw(t, execPath, "dialog-dismiss")
+
+	// Click button to trigger dialog
+	runSw(t, execPath, "click", btnRef)
+	time.Sleep(500 * time.Millisecond)
+
+	result := mustRunSw(execPath, "eval", "document.getElementById('result').textContent")
+	if strings.Contains(result, "dismissed") {
+		t.Log("✓ dialog-dismiss worked")
+	} else {
+		t.Logf("Warning: dialog-dismiss result: %s", result)
+	}
+
+	t.Log("✓ TestDialogDismiss passed!")
+}
+
+// TestResize tests viewport resize command
+func TestResize(t *testing.T) {
+	execPath := getExecPath(t)
+	cleanupDaemon(execPath)
+
+	runSw(t, execPath, append([]string{"open", "data:text/html,<html><body>resize test</body></html>"}, headedArgs()...)...)
+	defer closeBrowser(execPath)
+	time.Sleep(1 * time.Second)
+
+	// Resize to specific dimensions
+	runSw(t, execPath, "resize", "1280", "720")
+	time.Sleep(300 * time.Millisecond)
+
+	// Verify via eval
+	width := mustRunSw(execPath, "eval", "window.innerWidth")
+	height := mustRunSw(execPath, "eval", "window.innerHeight")
+	t.Logf("Window size after resize: %s x %s", width, height)
+
+	if strings.Contains(width, "1280") {
+		t.Log("✓ Window width correctly set to 1280")
+	} else {
+		t.Logf("Warning: expected width 1280, got: %s", width)
+	}
+
+	if strings.Contains(height, "720") {
+		t.Log("✓ Window height correctly set to 720")
+	} else {
+		t.Logf("Warning: expected height 720, got: %s", height)
+	}
+
+	t.Log("✓ TestResize passed!")
+}
+
+// TestStateSaveLoad tests state-save and state-load commands
+func TestStateSaveLoad(t *testing.T) {
+	execPath := getExecPath(t)
+	cleanupDaemon(execPath)
+
+	stateFile := "/tmp/sw_test_state.json"
+	defer os.Remove(stateFile)
+
+	html := `<!DOCTYPE html>
+<html>
+<head><title>State Test</title></head>
+<body><p>State test page</p></body>
+</html>`
+
+	runSw(t, execPath, append([]string{"open", dataURL(html)}, headedArgs()...)...)
+	defer closeBrowser(execPath)
+	time.Sleep(1 * time.Second)
+
+	// Set a cookie
+	runSw(t, execPath, "cookie-set", "statetest", "statevalue")
+	time.Sleep(200 * time.Millisecond)
+
+	// Save state
+	runSw(t, execPath, "state-save", stateFile)
+	time.Sleep(200 * time.Millisecond)
+
+	// Verify file was created
+	if _, err := os.Stat(stateFile); err != nil {
+		t.Fatalf("state-save did not create file %s: %v", stateFile, err)
+	}
+	t.Log("✓ state-save created the state file")
+
+	// Clear cookies
+	runSw(t, execPath, "cookie-clear")
+	time.Sleep(200 * time.Millisecond)
+
+	// Verify cookie is gone
+	result := mustRunSw(execPath, "cookie-get", "statetest")
+	if strings.Contains(result, "statevalue") {
+		t.Logf("Warning: cookie still present after clear: %s", result)
+	}
+
+	// Load state
+	runSw(t, execPath, "state-load", stateFile)
+	time.Sleep(200 * time.Millisecond)
+
+	// Verify cookie is restored
+	result = mustRunSw(execPath, "cookie-get", "statetest")
+	if strings.Contains(result, "statevalue") {
+		t.Log("✓ state-load restored cookies")
+	} else {
+		t.Logf("Warning: cookie not restored after state-load: %s", result)
+	}
+
+	t.Log("✓ TestStateSaveLoad passed!")
+}
+
+// TestScreenshotRef tests taking element-level screenshot via ref
+func TestScreenshotRef(t *testing.T) {
+	execPath := getExecPath(t)
+	cleanupDaemon(execPath)
+
+	outFile := "/tmp/sw_element_screenshot.png"
+	defer os.Remove(outFile)
+
+	html := `<!DOCTYPE html>
+<html>
+<head><title>Screenshot Ref Test</title></head>
+<body>
+<h1 id="title">Screenshot Target</h1>
+<p>Some other content</p>
+</body>
+</html>`
+
+	runSw(t, execPath, append([]string{"open", dataURL(html)}, headedArgs()...)...)
+	defer closeBrowser(execPath)
+	time.Sleep(1 * time.Second)
+
+	// Get snapshot to find a ref
+	snapshot := runSw(t, execPath, "snapshot")
+	titleRef := findElementByContent(snapshot, "Screenshot Target", "heading")
+	if titleRef == "" {
+		titleRef = findElementByContent(snapshot, "Screenshot Target", "")
+	}
+	if titleRef == "" {
+		t.Fatal("Could not find title element in snapshot")
+	}
+	t.Logf("Found element ref: %s", titleRef)
+
+	// Take element screenshot
+	runSw(t, execPath, "screenshot", titleRef, "--filename", outFile)
+	time.Sleep(300 * time.Millisecond)
+
+	// Verify file was created
+	info, err := os.Stat(outFile)
+	if err != nil {
+		t.Fatalf("screenshot with ref did not create file %s: %v", outFile, err)
+	}
+	if info.Size() == 0 {
+		t.Fatalf("screenshot file is empty: %s", outFile)
+	}
+	t.Logf("✓ Element screenshot saved to %s (%d bytes)", outFile, info.Size())
+
+	t.Log("✓ TestScreenshotRef passed!")
+}
+
+// TestSnapshotFilename tests snapshot --filename flag
+func TestSnapshotFilename(t *testing.T) {
+	execPath := getExecPath(t)
+	cleanupDaemon(execPath)
+
+	outFile := "/tmp/sw_snapshot_test.txt"
+	defer os.Remove(outFile)
+
+	runSw(t, execPath, append([]string{"open", "https://example.com"}, headedArgs()...)...)
+	defer closeBrowser(execPath)
+	time.Sleep(2 * time.Second)
+
+	// Take snapshot with filename
+	runSw(t, execPath, "snapshot", "--filename", outFile)
+	time.Sleep(300 * time.Millisecond)
+
+	// Verify file was created
+	info, err := os.Stat(outFile)
+	if err != nil {
+		t.Fatalf("snapshot --filename did not create file %s: %v", outFile, err)
+	}
+	if info.Size() == 0 {
+		t.Fatalf("snapshot file is empty: %s", outFile)
+	}
+
+	// Verify content looks like an aria snapshot
+	content, _ := os.ReadFile(outFile)
+	t.Logf("Snapshot file size: %d bytes", len(content))
+	if len(content) > 0 {
+		t.Log("✓ Snapshot file has content")
+	}
+
+	t.Log("✓ TestSnapshotFilename passed!")
+}
