@@ -338,6 +338,11 @@ type TracingParams struct {
 	Dir      string `json:"dir,omitempty"` // client CWD; files are saved here when no explicit filename
 }
 
+// VideoStartParams represents parameters for the video-start command.
+type VideoStartParams struct {
+	Dir string `json:"dir,omitempty"` // client CWD; video file is saved here
+}
+
 // RouteParams represents parameters for the route command.
 type RouteParams struct {
 	Pattern       string            `json:"pattern"`

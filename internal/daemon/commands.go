@@ -1,11 +1,15 @@
 package daemon
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -2100,267 +2104,258 @@ func (s *Server) cmdUnroute(params json.RawMessage) (interface{}, error) {
 	return &protocol.CommandResult{Success: true, Message: fmt.Sprintf("route removed: %s", p.Pattern)}, nil
 }
 
-// cmdVideoStart starts real video recording by restarting the session with RecordVideo enabled.
+// videoState holds CDP screencast recording state.
+type videoState struct {
+	cdpSession playwright.CDPSession
+	cmd        *exec.Cmd
+	stdin      io.WriteCloser
+	outputFile string
+}
+
+// findPlaywrightFFmpeg locates the ffmpeg binary bundled with the Playwright installation.
+// playwright-go downloads Playwright's driver (including ffmpeg) to the OS cache directory.
+func findPlaywrightFFmpeg() (string, error) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("could not get home directory: %w", err)
+	}
+
+	var cacheBase string
+	switch runtime.GOOS {
+	case "darwin":
+		cacheBase = filepath.Join(homeDir, "Library", "Caches")
+	case "linux":
+		cacheBase = filepath.Join(homeDir, ".cache")
+	case "windows":
+		cacheBase = filepath.Join(homeDir, "AppData", "Local")
+	default:
+		return "", fmt.Errorf("unsupported OS: %s", runtime.GOOS)
+	}
+
+	// Read browsers.json from the most recent playwright-go driver to get the ffmpeg revision.
+	playwrightGoBase := filepath.Join(cacheBase, "ms-playwright-go")
+	entries, err := os.ReadDir(playwrightGoBase)
+	if err != nil {
+		return "", fmt.Errorf("playwright-go cache not found at %s: %w", playwrightGoBase, err)
+	}
+
+	var browsersJSONPath string
+	for i := len(entries) - 1; i >= 0; i-- {
+		p := filepath.Join(playwrightGoBase, entries[i].Name(), "package", "browsers.json")
+		if _, err := os.Stat(p); err == nil {
+			browsersJSONPath = p
+			break
+		}
+	}
+	if browsersJSONPath == "" {
+		return "", fmt.Errorf("browsers.json not found in playwright-go cache")
+	}
+
+	data, err := os.ReadFile(browsersJSONPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read browsers.json: %w", err)
+	}
+
+	var config struct {
+		Browsers []struct {
+			Name     string `json:"name"`
+			Revision string `json:"revision"`
+		} `json:"browsers"`
+	}
+	if err := json.Unmarshal(data, &config); err != nil {
+		return "", fmt.Errorf("failed to parse browsers.json: %w", err)
+	}
+
+	var revision string
+	for _, b := range config.Browsers {
+		if b.Name == "ffmpeg" {
+			revision = b.Revision
+			break
+		}
+	}
+	if revision == "" {
+		return "", fmt.Errorf("ffmpeg entry not found in browsers.json")
+	}
+
+	var binaryName string
+	switch runtime.GOOS {
+	case "darwin":
+		binaryName = "ffmpeg-mac"
+	case "linux":
+		binaryName = "ffmpeg-linux"
+	case "windows":
+		binaryName = "ffmpeg-win64.exe"
+	}
+
+	ffmpegPath := filepath.Join(cacheBase, "ms-playwright", "ffmpeg-"+revision, binaryName)
+	if _, err := os.Stat(ffmpegPath); err != nil {
+		return "", fmt.Errorf("ffmpeg binary not found at %s: %w", ffmpegPath, err)
+	}
+
+	return ffmpegPath, nil
+}
+
+// cmdVideoStart starts video recording via CDP Page.startScreencast.
+// Frames are captured as JPEG via CDP and piped to Playwright's bundled ffmpeg for WebM encoding.
+// This approach works with stealth mode without restarting the browser session.
 func (s *Server) cmdVideoStart(params json.RawMessage) (interface{}, error) {
 	inst, err := s.requireSession()
 	if err != nil {
 		return nil, err
 	}
 
-	// Save current URL and session config
-	currentURL := inst.Page.URL()
-	sessionCfg := inst.Config
-
-	// Create a temp dir for recording
-	videoDir, err := os.MkdirTemp("", "sw-video-*")
-	if err != nil {
-		return nil, fmt.Errorf("failed to create video dir: %w", err)
-	}
-
 	s.mu.Lock()
-	s.videoDir = videoDir
-	s.preVideoConfig = sessionCfg // save original config for restore after stop
-	// Close current session
-	s.sessions.Close(sessionCfg.Name)
-	s.currentSession = nil
-	s.consoleMessages = nil
-	s.networkEvents = nil
-	s.lastConsoleLen = 0
-
-	// Restart session with RecordVideo.
-	// Playwright video recording requires a fresh browser context created with RecordVideo option.
-	// Stealth mode connects to an existing Chrome via CDP and reuses its pre-existing context,
-	// which cannot have RecordVideo injected post-creation. Non-stealth chromium creates a fresh
-	// context where RecordVideo is properly configured.
-	newCfg := &session.Config{
-		Name:        sessionCfg.Name,
-		Browser:     "chromium", // must use bundled chromium (not channel/stealth) for video
-		Headed:      sessionCfg.Headed,
-		Stealth:     false, // stealth reuses existing CDP context; video needs a fresh context
-		Persistent:  sessionCfg.Persistent,
-		Profile:     sessionCfg.Profile,
-		UserDataDir: sessionCfg.UserDataDir,
-		RecordVideo: videoDir,
-		Device:      sessionCfg.Device,
-	}
-	newInst, err := s.sessions.GetOrCreate(newCfg)
-	if err != nil {
+	if s.video != nil {
 		s.mu.Unlock()
-		return nil, fmt.Errorf("failed to restart session for recording: %w", err)
-	}
-	s.currentSession = newInst
-
-	// Re-register event listeners
-	if sbPage, ok := newInst.Page.(*seleniumbase.Page); ok {
-		pwPage := sbPage.PlaywrightPage()
-		pwPage.OnConsole(func(msg playwright.ConsoleMessage) {
-			s.eventMu.Lock()
-			s.consoleMessages = append(s.consoleMessages, protocol.ConsoleEntry{
-				Type: msg.Type(),
-				Text: msg.Text(),
-			})
-			s.eventMu.Unlock()
-		})
-		pwPage.Context().OnRequest(func(req playwright.Request) {
-			s.eventMu.Lock()
-			s.networkEvents = append(s.networkEvents, protocol.NetworkEntry{
-				URL:          req.URL(),
-				Method:       req.Method(),
-				ResourceType: req.ResourceType(),
-				Timestamp:    time.Now().UnixMilli(),
-			})
-			s.eventMu.Unlock()
-		})
-		pwPage.Context().OnResponse(func(resp playwright.Response) {
-			s.eventMu.Lock()
-			url := resp.URL()
-			status := resp.Status()
-			for i := len(s.networkEvents) - 1; i >= 0; i-- {
-				if s.networkEvents[i].URL == url && s.networkEvents[i].Status == 0 {
-					s.networkEvents[i].Status = status
-					break
-				}
-			}
-			s.eventMu.Unlock()
-		})
+		return nil, fmt.Errorf("video recording already in progress")
 	}
 	s.mu.Unlock()
 
-	// Navigate back to original URL
-	if currentURL != "" && currentURL != "about:blank" {
-		if err := newInst.Page.Goto(currentURL); err != nil {
-			return nil, fmt.Errorf("failed to navigate back to original URL: %w", err)
-		}
-	}
-
-	return &protocol.CommandResult{
-		Success: true,
-		Message: fmt.Sprintf("video recording started, saving to %s", videoDir),
-	}, nil
-}
-
-// cmdVideoStop stops video recording, saves the file, and restarts the session without recording.
-func (s *Server) cmdVideoStop(params json.RawMessage) (interface{}, error) {
-	var p protocol.TracingParams // reuse TracingParams for filename
+	var p protocol.VideoStartParams
 	if len(params) > 0 {
 		json.Unmarshal(params, &p)
 	}
 
-	s.mu.Lock()
-	inst := s.currentSession
-	videoDir := s.videoDir
-	s.mu.Unlock()
-
-	if inst == nil {
-		return nil, ErrBrowserNotOpen
+	sbPage, ok := inst.Page.(*seleniumbase.Page)
+	if !ok {
+		return nil, fmt.Errorf("CDP screencast requires playwright-based session")
 	}
-	if videoDir == "" {
-		return nil, fmt.Errorf("no video recording in progress")
-	}
+	pwPage := sbPage.PlaywrightPage()
 
-	// Get video path before closing
-	var videoPath string
-	if sbPage, ok := inst.Page.(*seleniumbase.Page); ok {
-		pwPage := sbPage.PlaywrightPage()
-		if video := pwPage.Video(); video != nil {
-			if path, err := video.Path(); err == nil {
-				videoPath = path
-			}
-		}
-	}
-
-	// Save current URL and config for restart
-	currentURL := inst.Page.URL()
-	sessionCfg := inst.Config
-
-	// Close session to finalize video
-	s.mu.Lock()
-	s.sessions.Close(sessionCfg.Name)
-	s.currentSession = nil
-	s.videoDir = ""
-	s.mu.Unlock()
-
-	// Determine output filename (always absolute so daemon CWD doesn't matter)
+	// Determine output file path
 	outDir := p.Dir
 	if outDir == "" {
 		outDir = s.outputDir
 	}
-	dest := p.Filename
-	if dest == "" {
-		ts := time.Now().UTC().Format("2006-01-02T15-04-05-000Z")
-		dest = filepath.Join(outDir, "video-"+ts+".webm")
-	} else if !filepath.IsAbs(dest) {
-		dest = filepath.Join(outDir, dest)
+	if err := os.MkdirAll(outDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create output directory: %w", err)
+	}
+	ts := time.Now().UTC().Format("2006-01-02T15-04-05-000Z")
+	outputFile := filepath.Join(outDir, "video-"+ts+".webm")
+
+	// Find Playwright's bundled ffmpeg
+	ffmpegPath, err := findPlaywrightFFmpeg()
+	if err != nil {
+		return nil, fmt.Errorf("playwright ffmpeg not found (run 'sw install'): %w", err)
 	}
 
-	// Ensure output directory exists
-	os.MkdirAll(filepath.Dir(dest), 0755)
-
-	// Playwright writes the video after the browser context is closed.
-	// Poll for up to 5s for the file to appear in videoDir.
-	findVideoInDir := func(dir string) string {
-		deadline := time.Now().Add(5 * time.Second)
-		for time.Now().Before(deadline) {
-			entries, _ := os.ReadDir(dir)
-			for _, e := range entries {
-				if strings.HasSuffix(e.Name(), ".webm") || strings.HasSuffix(e.Name(), ".mp4") {
-					return filepath.Join(dir, e.Name())
-				}
-			}
-			time.Sleep(200 * time.Millisecond)
-		}
-		return ""
+	// Start ffmpeg: read JPEG frames from stdin, encode to WebM VP8
+	cmd := exec.Command(ffmpegPath,
+		"-f", "image2pipe",
+		"-c:v", "mjpeg",
+		"-framerate", "10",
+		"-i", "pipe:0",
+		"-c:v", "libvpx",
+		"-auto-alt-ref", "0",
+		"-y",
+		outputFile,
+	)
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get ffmpeg stdin pipe: %w", err)
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("failed to start ffmpeg: %w", err)
 	}
 
-	// Move the video file
-	src := videoPath
-	if src == "" || func() bool { _, err := os.Stat(src); return os.IsNotExist(err) }() {
-		// Fall back to scanning the temp dir
-		if videoDir != "" {
-			src = findVideoInDir(videoDir)
-		}
+	// Create CDPSession for the current page
+	cdpSession, err := pwPage.Context().NewCDPSession(pwPage)
+	if err != nil {
+		stdin.Close()
+		cmd.Process.Kill()
+		return nil, fmt.Errorf("failed to create CDP session: %w", err)
 	}
 
-	if src != "" {
-		if err := os.Rename(src, dest); err != nil {
-			// Cross-device: copy then delete
-			if data, readErr := os.ReadFile(src); readErr == nil {
-				os.WriteFile(dest, data, 0644)
-				os.Remove(src)
-			}
-		}
+	vs := &videoState{
+		cdpSession: cdpSession,
+		cmd:        cmd,
+		stdin:      stdin,
+		outputFile: outputFile,
 	}
-	if videoDir != "" {
-		os.RemoveAll(videoDir)
-	}
-
-	// Restart session without recording.
-	// Restore original config (pre-video-start) to get back the original browser/channel/device.
-	var newInst *session.Instance
 	s.mu.Lock()
-	restoreCfg := s.preVideoConfig
-	s.preVideoConfig = nil
-	if restoreCfg == nil {
-		restoreCfg = sessionCfg // fallback: use recording session config
-	}
-	newCfg := &session.Config{
-		Name:        restoreCfg.Name,
-		Browser:     restoreCfg.Browser,
-		Headed:      restoreCfg.Headed,
-		Stealth:     restoreCfg.Stealth,
-		Persistent:  restoreCfg.Persistent,
-		Profile:     restoreCfg.Profile,
-		UserDataDir: restoreCfg.UserDataDir,
-		Device:      restoreCfg.Device,
-	}
-	newInst, err := s.sessions.GetOrCreate(newCfg)
-	if err == nil {
-		s.currentSession = newInst
-		// Re-register event listeners
-		if sbPage, ok := newInst.Page.(*seleniumbase.Page); ok {
-			pwPage := sbPage.PlaywrightPage()
-			pwPage.OnConsole(func(msg playwright.ConsoleMessage) {
-				s.eventMu.Lock()
-				s.consoleMessages = append(s.consoleMessages, protocol.ConsoleEntry{
-					Type: msg.Type(),
-					Text: msg.Text(),
-				})
-				s.eventMu.Unlock()
-			})
-			pwPage.Context().OnRequest(func(req playwright.Request) {
-				s.eventMu.Lock()
-				s.networkEvents = append(s.networkEvents, protocol.NetworkEntry{
-					URL:          req.URL(),
-					Method:       req.Method(),
-					ResourceType: req.ResourceType(),
-					Timestamp:    time.Now().UnixMilli(),
-				})
-				s.eventMu.Unlock()
-			})
-			pwPage.Context().OnResponse(func(resp playwright.Response) {
-				s.eventMu.Lock()
-				url := resp.URL()
-				status := resp.Status()
-				for i := len(s.networkEvents) - 1; i >= 0; i-- {
-					if s.networkEvents[i].URL == url && s.networkEvents[i].Status == 0 {
-						s.networkEvents[i].Status = status
-						break
-					}
-				}
-				s.eventMu.Unlock()
-			})
-		}
-	}
+	s.video = vs
 	s.mu.Unlock()
 
-	// Navigate back
-	if newInst != nil && currentURL != "" && currentURL != "about:blank" {
-		newInst.Page.Goto(currentURL)
+	// Register frame handler: decode base64 JPEG, write to ffmpeg stdin, ack the frame.
+	// Must run in a goroutine: the handler is invoked from the playwright event loop goroutine,
+	// and calling cdpSession.Send() (a blocking CDP round-trip) from within that goroutine
+	// would deadlock since the response can't be processed while the event loop is blocked.
+	cdpSession.On("Page.screencastFrame", func(payload map[string]any) {
+		go func() {
+			dataStr, _ := payload["data"].(string)
+			sessionID := payload["sessionId"]
+
+			frameData, err := base64.StdEncoding.DecodeString(dataStr)
+			if err == nil {
+				s.mu.Lock()
+				w := s.video
+				s.mu.Unlock()
+				if w != nil && w.stdin != nil {
+					w.stdin.Write(frameData) // errors are ignored; write fails silently after stop
+				}
+			}
+
+			// Acknowledge the frame so Chrome continues sending the next one
+			cdpSession.Send("Page.screencastFrameAck", map[string]any{"sessionId": sessionID})
+		}()
+	})
+
+	// Begin screencast
+	if _, err := cdpSession.Send("Page.startScreencast", map[string]any{
+		"format":        "jpeg",
+		"quality":       80,
+		"everyNthFrame": 1,
+	}); err != nil {
+		cdpSession.Detach()
+		stdin.Close()
+		cmd.Process.Kill()
+		s.mu.Lock()
+		s.video = nil
+		s.mu.Unlock()
+		return nil, fmt.Errorf("failed to start screencast: %w", err)
 	}
 
 	return &protocol.CommandResult{
 		Success: true,
-		Message: fmt.Sprintf("video recording stopped, saved to %s", dest),
+		Message: fmt.Sprintf("video recording started (CDP screencast), output: %s", outputFile),
+	}, nil
+}
+
+// cmdVideoStop stops the CDP screencast and finalizes the WebM video file.
+func (s *Server) cmdVideoStop(params json.RawMessage) (interface{}, error) {
+	s.mu.Lock()
+	vs := s.video
+	s.video = nil
+	s.mu.Unlock()
+
+	if vs == nil {
+		return nil, fmt.Errorf("no video recording in progress")
+	}
+
+	// Stop the CDP screencast
+	vs.cdpSession.Send("Page.stopScreencast", nil)
+
+	// Brief pause to let any in-flight frames arrive and be written
+	time.Sleep(300 * time.Millisecond)
+
+	// Close ffmpeg stdin → signals EOF → ffmpeg finishes encoding the WebM file
+	vs.stdin.Close()
+
+	// Wait for ffmpeg to finish (with a 15s timeout in case something goes wrong)
+	done := make(chan error, 1)
+	go func() { done <- vs.cmd.Wait() }()
+	select {
+	case <-done:
+	case <-time.After(15 * time.Second):
+		vs.cmd.Process.Kill()
+	}
+
+	// Detach CDP session
+	vs.cdpSession.Detach()
+
+	return &protocol.CommandResult{
+		Success: true,
+		Message: "video saved to " + vs.outputFile,
 	}, nil
 }
 

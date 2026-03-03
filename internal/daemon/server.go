@@ -36,9 +36,8 @@ type Server struct {
 	consoleMessages []protocol.ConsoleEntry
 	networkEvents   []protocol.NetworkEntry
 	activeRoutes    []protocol.RouteEntry
-	videoDir        string
-	preVideoConfig  *session.Config // session config saved before video-start (for restore after video-stop)
-	outputDir       string          // base output dir for snapshots and console logs (.sw)
+	video           *videoState // CDP screencast recording state (nil when not recording)
+	outputDir       string      // base output dir for snapshots and console logs (.sw)
 	lastConsoleLen  int    // number of console messages processed in last takeSnapshot
 }
 

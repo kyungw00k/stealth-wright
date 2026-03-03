@@ -2340,7 +2340,8 @@ func newVideoStartCmd() *cobra.Command {
 				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
 				os.Exit(1)
 			}
-			resp, err := cli.Call("video-start", nil)
+			cwd, _ := os.Getwd()
+			resp, err := cli.Call("video-start", protocol.VideoStartParams{Dir: cwd})
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "Error:", err)
 				os.Exit(1)
