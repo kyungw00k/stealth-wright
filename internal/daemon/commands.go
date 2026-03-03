@@ -718,13 +718,26 @@ func (s *Server) cmdScreenshot(params json.RawMessage) (interface{}, error) {
 	}
 
 	filename := p.Filename
+	if filename != "" && !filepath.IsAbs(filename) {
+		dir := p.Dir
+		if dir == "" {
+			dir = s.outputDir
+		}
+		if dir != "" {
+			filename = filepath.Join(dir, filename)
+		}
+	}
 	if filename == "" {
 		t := time.Now().UTC()
 		ms := t.Nanosecond() / 1e6
 		name := fmt.Sprintf("page-%s-%03dZ.png", t.Format("2006-01-02T15-04-05"), ms)
-		if s.outputDir != "" {
-			if err := os.MkdirAll(s.outputDir, 0755); err == nil {
-				filename = filepath.Join(s.outputDir, name)
+		dir := p.Dir
+		if dir == "" {
+			dir = s.outputDir
+		}
+		if dir != "" {
+			if err := os.MkdirAll(dir, 0755); err == nil {
+				filename = filepath.Join(dir, name)
 			}
 		}
 		if filename == "" {
@@ -2106,6 +2119,7 @@ func (s *Server) cmdVideoStart(params json.RawMessage) (interface{}, error) {
 
 	s.mu.Lock()
 	s.videoDir = videoDir
+	s.preVideoConfig = sessionCfg // save original config for restore after stop
 	// Close current session
 	s.sessions.Close(sessionCfg.Name)
 	s.currentSession = nil
@@ -2113,16 +2127,21 @@ func (s *Server) cmdVideoStart(params json.RawMessage) (interface{}, error) {
 	s.networkEvents = nil
 	s.lastConsoleLen = 0
 
-	// Restart session with RecordVideo
+	// Restart session with RecordVideo.
+	// Playwright video recording requires a fresh browser context created with RecordVideo option.
+	// Stealth mode connects to an existing Chrome via CDP and reuses its pre-existing context,
+	// which cannot have RecordVideo injected post-creation. Non-stealth chromium creates a fresh
+	// context where RecordVideo is properly configured.
 	newCfg := &session.Config{
 		Name:        sessionCfg.Name,
-		Browser:     sessionCfg.Browser,
+		Browser:     "chromium", // must use bundled chromium (not channel/stealth) for video
 		Headed:      sessionCfg.Headed,
-		Stealth:     sessionCfg.Stealth,
+		Stealth:     false, // stealth reuses existing CDP context; video needs a fresh context
 		Persistent:  sessionCfg.Persistent,
 		Profile:     sessionCfg.Profile,
 		UserDataDir: sessionCfg.UserDataDir,
 		RecordVideo: videoDir,
+		Device:      sessionCfg.Device,
 	}
 	newInst, err := s.sessions.GetOrCreate(newCfg)
 	if err != nil {
@@ -2221,51 +2240,78 @@ func (s *Server) cmdVideoStop(params json.RawMessage) (interface{}, error) {
 	s.videoDir = ""
 	s.mu.Unlock()
 
-	// Determine output filename
+	// Determine output filename (always absolute so daemon CWD doesn't matter)
+	outDir := p.Dir
+	if outDir == "" {
+		outDir = s.outputDir
+	}
 	dest := p.Filename
 	if dest == "" {
-		dest = fmt.Sprintf("video-%d.webm", time.Now().UnixMilli())
+		ts := time.Now().UTC().Format("2006-01-02T15-04-05-000Z")
+		dest = filepath.Join(outDir, "video-"+ts+".webm")
+	} else if !filepath.IsAbs(dest) {
+		dest = filepath.Join(outDir, dest)
 	}
 
-	// Move or find the video file
-	if videoPath != "" {
-		// Wait a moment for file to be written
-		time.Sleep(500 * time.Millisecond)
-		if err := os.Rename(videoPath, dest); err != nil {
-			// Try copy if rename fails (cross-device)
-			if data, readErr := os.ReadFile(videoPath); readErr == nil {
-				os.WriteFile(dest, data, 0644)
-				os.Remove(videoPath)
-			}
-		}
-	} else if videoDir != "" {
-		// Look for any video file in the directory
-		entries, _ := os.ReadDir(videoDir)
-		for _, e := range entries {
-			if strings.HasSuffix(e.Name(), ".webm") || strings.HasSuffix(e.Name(), ".mp4") {
-				src := filepath.Join(videoDir, e.Name())
-				if err := os.Rename(src, dest); err != nil {
-					if data, readErr := os.ReadFile(src); readErr == nil {
-						os.WriteFile(dest, data, 0644)
-					}
+	// Ensure output directory exists
+	os.MkdirAll(filepath.Dir(dest), 0755)
+
+	// Playwright writes the video after the browser context is closed.
+	// Poll for up to 5s for the file to appear in videoDir.
+	findVideoInDir := func(dir string) string {
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			entries, _ := os.ReadDir(dir)
+			for _, e := range entries {
+				if strings.HasSuffix(e.Name(), ".webm") || strings.HasSuffix(e.Name(), ".mp4") {
+					return filepath.Join(dir, e.Name())
 				}
-				break
+			}
+			time.Sleep(200 * time.Millisecond)
+		}
+		return ""
+	}
+
+	// Move the video file
+	src := videoPath
+	if src == "" || func() bool { _, err := os.Stat(src); return os.IsNotExist(err) }() {
+		// Fall back to scanning the temp dir
+		if videoDir != "" {
+			src = findVideoInDir(videoDir)
+		}
+	}
+
+	if src != "" {
+		if err := os.Rename(src, dest); err != nil {
+			// Cross-device: copy then delete
+			if data, readErr := os.ReadFile(src); readErr == nil {
+				os.WriteFile(dest, data, 0644)
+				os.Remove(src)
 			}
 		}
+	}
+	if videoDir != "" {
 		os.RemoveAll(videoDir)
 	}
 
-	// Restart session without recording
+	// Restart session without recording.
+	// Restore original config (pre-video-start) to get back the original browser/channel/device.
 	var newInst *session.Instance
 	s.mu.Lock()
+	restoreCfg := s.preVideoConfig
+	s.preVideoConfig = nil
+	if restoreCfg == nil {
+		restoreCfg = sessionCfg // fallback: use recording session config
+	}
 	newCfg := &session.Config{
-		Name:        sessionCfg.Name,
-		Browser:     sessionCfg.Browser,
-		Headed:      sessionCfg.Headed,
-		Stealth:     sessionCfg.Stealth,
-		Persistent:  sessionCfg.Persistent,
-		Profile:     sessionCfg.Profile,
-		UserDataDir: sessionCfg.UserDataDir,
+		Name:        restoreCfg.Name,
+		Browser:     restoreCfg.Browser,
+		Headed:      restoreCfg.Headed,
+		Stealth:     restoreCfg.Stealth,
+		Persistent:  restoreCfg.Persistent,
+		Profile:     restoreCfg.Profile,
+		UserDataDir: restoreCfg.UserDataDir,
+		Device:      restoreCfg.Device,
 	}
 	newInst, err := s.sessions.GetOrCreate(newCfg)
 	if err == nil {

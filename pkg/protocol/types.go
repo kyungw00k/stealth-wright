@@ -140,6 +140,7 @@ type ScreenshotParams struct {
 	Ref      string `json:"ref,omitempty"`
 	Filename string `json:"filename,omitempty"`
 	FullPage bool   `json:"fullPage,omitempty"`
+	Dir      string `json:"dir,omitempty"` // client CWD; files are saved here when no explicit filename
 }
 
 // DragParams represents parameters for the drag command.
@@ -334,6 +335,7 @@ type NetworkParams struct {
 // TracingParams represents parameters for tracing commands.
 type TracingParams struct {
 	Filename string `json:"filename,omitempty"`
+	Dir      string `json:"dir,omitempty"` // client CWD; files are saved here when no explicit filename
 }
 
 // RouteParams represents parameters for the route command.

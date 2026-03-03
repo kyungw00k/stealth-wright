@@ -746,9 +746,11 @@ func newScreenshotCmd() *cobra.Command {
 			if len(args) > 0 {
 				ref = args[0]
 			}
+			cwd, _ := os.Getwd()
 			params := map[string]interface{}{
 				"filename": filename,
 				"fullPage": fullPage,
+				"dir":      cwd,
 			}
 			if ref != "" {
 				params["ref"] = ref
@@ -2367,7 +2369,8 @@ func newVideoStopCmd() *cobra.Command {
 				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
 				os.Exit(1)
 			}
-			params := protocol.TracingParams{Filename: filename}
+			cwd, _ := os.Getwd()
+			params := protocol.TracingParams{Filename: filename, Dir: cwd}
 			resp, err := cli.Call("video-stop", params)
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "Error:", err)
