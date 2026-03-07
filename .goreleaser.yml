@@ -14,7 +14,8 @@ builds:
 
 archives:
   - id: sw
-    format: tar.gz
+    formats:
+      - tar.gz
 
 release:
   github:
