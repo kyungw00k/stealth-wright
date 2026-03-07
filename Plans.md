@@ -40,8 +40,21 @@ playwright-cli 커맨드·옵션 대비 sw의 구현 커버리지 조사 결과.
 | Task | 내용 | Status |
 |------|------|--------|
 | 2.1 | `sw open` → `sw video-start` → 페이지 조작 → `sw video-stop` E2E 동작 확인 | cc:완료 |
-| 2.2 | ffmpeg 경로 탐색 (`findPlaywrightFFmpeg`) 실패 시 에러 메시지 개선 | cc:TODO |
-| 2.3 | 비디오 통합 테스트 추가 (video-start / video-stop / 파일 생성 확인) | cc:TODO |
+| 2.2 | ffmpeg 경로 탐색 (`findPlaywrightFFmpeg`) 실패 시 에러 메시지 개선 | cc:완료 |
+| 2.3 | 비디오 통합 테스트 추가 (video-start / video-stop / 파일 생성 확인) | cc:완료 |
+
+## Phase 3: Semantic Locators + Annotated Screenshot
+
+| Task | 내용 | Status |
+|------|------|--------|
+| 3.1 | `protocol/types.go`: `FindParams`, `FindResult` 추가; `ClickParams`/`FillParams`/`HoverParams`에 semantic 필드; `ScreenshotParams`에 `Annotate` | cc:완료 |
+| 3.2 | `daemon/commands.go`: `findBySemantics()` 헬퍼 + `resolveRef()` 메서드 구현 | cc:완료 |
+| 3.3 | `daemon/commands.go`: `cmdFind` 핸들러 + registerCommands에 "find" 등록 | cc:완료 |
+| 3.4 | `cmd/sw/main.go`: `newFindCmd()` 추가 (`--role/--text/--label/--placeholder/--exact` 플래그) | cc:완료 |
+| 3.5 | `daemon/commands.go`: click/fill/hover/check/uncheck/dblclick → `resolveSelector` → `resolveRef` 교체 | cc:완료 |
+| 3.6 | `cmd/sw/main.go`: click/fill/hover/check/uncheck에 semantic 플래그 추가, ref 선택적으로 변경 | cc:완료 |
+| 3.7 | `daemon/commands.go`: `cmdScreenshot`에 `Annotate` 처리 — JS overlay 주입 → screenshot → 제거 | cc:완료 |
+| 3.8 | `cmd/sw/main.go`: `newScreenshotCmd`에 `--annotate` 플래그 추가 | cc:완료 |
 
 ---
 

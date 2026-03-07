@@ -133,6 +133,7 @@ undetected browser automation.`,
 		newInstallBrowserCmd(),
 		newDevtoolsStartCmd(),
 		newDevicesCmd(),
+		newFindCmd(),
 		newVideoStartCmd(),
 		newVideoStopCmd(),
 		newDaemonCmd(),
@@ -582,19 +583,48 @@ func newSnapshotCmd() *cobra.Command {
 
 func newClickCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "click <ref> [button]",
+		Use:   "click [ref] [button]",
 		Short: "Click element",
-		Args:  cobra.RangeArgs(1, 2),
+		Args:  cobra.MaximumNArgs(2),
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := ensureDaemon(); err != nil {
 				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
 				os.Exit(1)
 			}
 
+			role, _ := cmd.Flags().GetString("role")
+			text, _ := cmd.Flags().GetString("text")
+			label, _ := cmd.Flags().GetString("label")
+			exact, _ := cmd.Flags().GetBool("exact")
 			modifiers, _ := cmd.Flags().GetStringArray("modifiers")
-			params := map[string]interface{}{"ref": args[0]}
+
+			ref := ""
+			if len(args) > 0 {
+				ref = args[0]
+			}
+			if ref == "" && role == "" && text == "" && label == "" {
+				fmt.Fprintln(os.Stderr, "Error: ref argument or --role/--text/--label required")
+				os.Exit(1)
+			}
+
+			params := map[string]interface{}{}
+			if ref != "" {
+				params["ref"] = ref
+			}
 			if len(args) > 1 {
 				params["button"] = args[1]
+			}
+			if role != "" {
+				params["role"] = role
+			}
+			if text != "" {
+				params["text"] = text
+			}
+			if label != "" {
+				params["label"] = label
+			}
+			if exact {
+				params["exact"] = exact
 			}
 			if len(modifiers) > 0 {
 				params["modifiers"] = modifiers
@@ -612,10 +642,18 @@ func newClickCmd() *cobra.Command {
 
 			var result protocol.CommandResult
 			json.Unmarshal(resp.Result, &result)
-			if len(modifiers) > 0 {
-				printRanCode(fmt.Sprintf("await page.locator('[ref=%s]').click({ button: '%s' });", args[0], strings.Join(modifiers, ",")))
+			if ref != "" {
+				if len(modifiers) > 0 {
+					printRanCode(fmt.Sprintf("await page.locator('[ref=%s]').click({ modifiers: [%s] });", ref, strings.Join(modifiers, ",")))
+				} else {
+					printRanCode(fmt.Sprintf("await page.locator('[ref=%s]').click();", ref))
+				}
+			} else if role != "" {
+				printRanCode(fmt.Sprintf("await page.getByRole('%s').click();", role))
+			} else if label != "" {
+				printRanCode(fmt.Sprintf("await page.getByLabel('%s').click();", label))
 			} else {
-				printRanCode(fmt.Sprintf("await page.locator('[ref=%s]').click();", args[0]))
+				printRanCode(fmt.Sprintf("await page.getByText('%s').click();", text))
 			}
 			if result.Snapshot != nil {
 				printSnapshot(result.Snapshot)
@@ -623,62 +661,168 @@ func newClickCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringArray("modifiers", nil, "Keyboard modifiers (Alt, Control, Meta, Shift)")
+	cmd.Flags().String("role", "", "ARIA role for semantic targeting (button, link, textbox, etc.)")
+	cmd.Flags().String("text", "", "Element text for semantic targeting")
+	cmd.Flags().String("label", "", "ARIA label for semantic targeting")
+	cmd.Flags().Bool("exact", false, "Require exact match for semantic targeting")
 	return cmd
 }
 
 func newFillCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "fill <ref> <text>",
+		Use:   "fill [ref] <value>",
 		Short: "Fill text into element",
-		Args:  cobra.ExactArgs(2),
+		Args:  cobra.RangeArgs(1, 2),
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := ensureDaemon(); err != nil {
 				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
 				os.Exit(1)
 			}
+
+			role, _ := cmd.Flags().GetString("role")
+			label, _ := cmd.Flags().GetString("label")
+			placeholder, _ := cmd.Flags().GetString("placeholder")
+			exact, _ := cmd.Flags().GetBool("exact")
 			submit, _ := cmd.Flags().GetBool("submit")
-			result, err := cli.Fill(args[0], args[1])
+
+			var ref, value string
+			if len(args) == 2 {
+				ref = args[0]
+				value = args[1]
+			} else {
+				// 1 arg: value only, semantic flags must provide the target
+				if role == "" && label == "" && placeholder == "" {
+					fmt.Fprintln(os.Stderr, "Error: ref argument or --role/--label/--placeholder required")
+					os.Exit(1)
+				}
+				value = args[0]
+			}
+
+			params := map[string]interface{}{"text": value}
+			if ref != "" {
+				params["ref"] = ref
+			}
+			if role != "" {
+				params["role"] = role
+			}
+			if label != "" {
+				params["label"] = label
+			}
+			if placeholder != "" {
+				params["placeholder"] = placeholder
+			}
+			if exact {
+				params["exact"] = exact
+			}
+			if submit {
+				params["submit"] = true
+			}
+
+			resp, err := cli.Call("fill", params)
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "Error:", err)
 				os.Exit(1)
 			}
-			// If --submit flag, send Enter after fill
-			if submit {
-				cli.Call("press", map[string]string{"key": "Enter"})
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
 			}
-			printRanCode(fmt.Sprintf("await page.locator('[ref=%s]').fill('%s');", args[0], args[1]))
-			if result != nil && result.Snapshot != nil {
+
+			var result protocol.CommandResult
+			json.Unmarshal(resp.Result, &result)
+			if ref != "" {
+				printRanCode(fmt.Sprintf("await page.locator('[ref=%s]').fill('%s');", ref, value))
+			} else if label != "" {
+				printRanCode(fmt.Sprintf("await page.getByLabel('%s').fill('%s');", label, value))
+			} else if placeholder != "" {
+				printRanCode(fmt.Sprintf("await page.getByPlaceholder('%s').fill('%s');", placeholder, value))
+			} else {
+				printRanCode(fmt.Sprintf("await page.getByRole('%s').fill('%s');", role, value))
+			}
+			if result.Snapshot != nil {
 				printSnapshot(result.Snapshot)
 			}
 		},
 	}
 	cmd.Flags().Bool("submit", false, "Press Enter after filling")
+	cmd.Flags().String("role", "", "ARIA role for semantic targeting (textbox, searchbox, etc.)")
+	cmd.Flags().String("label", "", "ARIA label for semantic targeting")
+	cmd.Flags().String("placeholder", "", "Input placeholder for semantic targeting")
+	cmd.Flags().Bool("exact", false, "Require exact match for semantic targeting")
 	return cmd
 }
 
 func newCheckCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "check <ref>",
+	cmd := &cobra.Command{
+		Use:   "check [ref]",
 		Short: "Check checkbox or radio button",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.MaximumNArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := ensureDaemon(); err != nil {
 				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
 				os.Exit(1)
 			}
 
-			result, err := cli.Check(args[0])
+			role, _ := cmd.Flags().GetString("role")
+			text, _ := cmd.Flags().GetString("text")
+			label, _ := cmd.Flags().GetString("label")
+			exact, _ := cmd.Flags().GetBool("exact")
+
+			ref := ""
+			if len(args) > 0 {
+				ref = args[0]
+			}
+			if ref == "" && role == "" && text == "" && label == "" {
+				fmt.Fprintln(os.Stderr, "Error: ref argument or --role/--text/--label required")
+				os.Exit(1)
+			}
+
+			params := map[string]interface{}{}
+			if ref != "" {
+				params["ref"] = ref
+			}
+			if role != "" {
+				params["role"] = role
+			}
+			if text != "" {
+				params["text"] = text
+			}
+			if label != "" {
+				params["label"] = label
+			}
+			if exact {
+				params["exact"] = exact
+			}
+
+			resp, err := cli.Call("check", params)
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "Error:", err)
 				os.Exit(1)
 			}
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
 
-			printRanCode(fmt.Sprintf("await page.locator('[ref=%s]').check();", args[0]))
-			if result != nil && result.Snapshot != nil {
+			var result protocol.CommandResult
+			json.Unmarshal(resp.Result, &result)
+			if ref != "" {
+				printRanCode(fmt.Sprintf("await page.locator('[ref=%s]').check();", ref))
+			} else if label != "" {
+				printRanCode(fmt.Sprintf("await page.getByLabel('%s').check();", label))
+			} else {
+				printRanCode(fmt.Sprintf("await page.getByRole('%s').check();", role))
+			}
+			if result.Snapshot != nil {
 				printSnapshot(result.Snapshot)
 			}
 		},
 	}
+	cmd.Flags().String("role", "", "ARIA role for semantic targeting")
+	cmd.Flags().String("text", "", "Element text for semantic targeting")
+	cmd.Flags().String("label", "", "ARIA label for semantic targeting")
+	cmd.Flags().Bool("exact", false, "Require exact match for semantic targeting")
+	return cmd
 }
 
 func newTypeCmd() *cobra.Command {
@@ -736,28 +880,78 @@ func newPressCmd() *cobra.Command {
 }
 
 func newHoverCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "hover <ref>",
+	cmd := &cobra.Command{
+		Use:   "hover [ref]",
 		Short: "Hover over element",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.MaximumNArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := ensureDaemon(); err != nil {
 				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
 				os.Exit(1)
 			}
 
-			result, err := cli.Hover(args[0])
+			role, _ := cmd.Flags().GetString("role")
+			text, _ := cmd.Flags().GetString("text")
+			label, _ := cmd.Flags().GetString("label")
+			exact, _ := cmd.Flags().GetBool("exact")
+
+			ref := ""
+			if len(args) > 0 {
+				ref = args[0]
+			}
+			if ref == "" && role == "" && text == "" && label == "" {
+				fmt.Fprintln(os.Stderr, "Error: ref argument or --role/--text/--label required")
+				os.Exit(1)
+			}
+
+			params := map[string]interface{}{}
+			if ref != "" {
+				params["ref"] = ref
+			}
+			if role != "" {
+				params["role"] = role
+			}
+			if text != "" {
+				params["text"] = text
+			}
+			if label != "" {
+				params["label"] = label
+			}
+			if exact {
+				params["exact"] = exact
+			}
+
+			resp, err := cli.Call("hover", params)
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "Error:", err)
 				os.Exit(1)
 			}
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
 
-			printRanCode(fmt.Sprintf("await page.locator('[ref=%s]').hover();", args[0]))
-			if result != nil && result.Snapshot != nil {
+			var result protocol.CommandResult
+			json.Unmarshal(resp.Result, &result)
+			if ref != "" {
+				printRanCode(fmt.Sprintf("await page.locator('[ref=%s]').hover();", ref))
+			} else if role != "" {
+				printRanCode(fmt.Sprintf("await page.getByRole('%s').hover();", role))
+			} else if label != "" {
+				printRanCode(fmt.Sprintf("await page.getByLabel('%s').hover();", label))
+			} else {
+				printRanCode(fmt.Sprintf("await page.getByText('%s').hover();", text))
+			}
+			if result.Snapshot != nil {
 				printSnapshot(result.Snapshot)
 			}
 		},
 	}
+	cmd.Flags().String("role", "", "ARIA role for semantic targeting")
+	cmd.Flags().String("text", "", "Element text for semantic targeting")
+	cmd.Flags().String("label", "", "ARIA label for semantic targeting")
+	cmd.Flags().Bool("exact", false, "Require exact match for semantic targeting")
+	return cmd
 }
 
 func newScreenshotCmd() *cobra.Command {
@@ -776,6 +970,7 @@ func newScreenshotCmd() *cobra.Command {
 			if len(args) > 0 {
 				ref = args[0]
 			}
+			annotate, _ := cmd.Flags().GetBool("annotate")
 			cwd, _ := os.Getwd()
 			params := map[string]interface{}{
 				"filename": filename,
@@ -784,6 +979,9 @@ func newScreenshotCmd() *cobra.Command {
 			}
 			if ref != "" {
 				params["ref"] = ref
+			}
+			if annotate {
+				params["annotate"] = true
 			}
 			resp, err := cli.Call("screenshot", params)
 			if err != nil {
@@ -802,6 +1000,7 @@ func newScreenshotCmd() *cobra.Command {
 	}
 	cmd.Flags().String("filename", "", "Output filename")
 	cmd.Flags().Bool("full-page", false, "Capture full page")
+	cmd.Flags().Bool("annotate", false, "Overlay ref numbers on elements")
 	return cmd
 }
 
@@ -881,22 +1080,52 @@ func newDblClickCmd() *cobra.Command {
 }
 
 func newUncheckCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "uncheck <ref>",
+	cmd := &cobra.Command{
+		Use:   "uncheck [ref]",
 		Short: "Uncheck checkbox or radio button",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.MaximumNArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := ensureDaemon(); err != nil {
 				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
 				os.Exit(1)
 			}
 
-			resp, err := cli.Call("uncheck", map[string]string{"ref": args[0]})
+			role, _ := cmd.Flags().GetString("role")
+			text, _ := cmd.Flags().GetString("text")
+			label, _ := cmd.Flags().GetString("label")
+			exact, _ := cmd.Flags().GetBool("exact")
+
+			ref := ""
+			if len(args) > 0 {
+				ref = args[0]
+			}
+			if ref == "" && role == "" && text == "" && label == "" {
+				fmt.Fprintln(os.Stderr, "Error: ref argument or --role/--text/--label required")
+				os.Exit(1)
+			}
+
+			params := map[string]interface{}{}
+			if ref != "" {
+				params["ref"] = ref
+			}
+			if role != "" {
+				params["role"] = role
+			}
+			if text != "" {
+				params["text"] = text
+			}
+			if label != "" {
+				params["label"] = label
+			}
+			if exact {
+				params["exact"] = exact
+			}
+
+			resp, err := cli.Call("uncheck", params)
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "Error:", err)
 				os.Exit(1)
 			}
-
 			if resp.Error != nil {
 				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
 				os.Exit(1)
@@ -904,12 +1133,23 @@ func newUncheckCmd() *cobra.Command {
 
 			var result protocol.CommandResult
 			json.Unmarshal(resp.Result, &result)
-			printRanCode(fmt.Sprintf("await page.locator('[ref=%s]').uncheck();", args[0]))
+			if ref != "" {
+				printRanCode(fmt.Sprintf("await page.locator('[ref=%s]').uncheck();", ref))
+			} else if label != "" {
+				printRanCode(fmt.Sprintf("await page.getByLabel('%s').uncheck();", label))
+			} else {
+				printRanCode(fmt.Sprintf("await page.getByRole('%s').uncheck();", role))
+			}
 			if result.Snapshot != nil {
 				printSnapshot(result.Snapshot)
 			}
 		},
 	}
+	cmd.Flags().String("role", "", "ARIA role for semantic targeting")
+	cmd.Flags().String("text", "", "Element text for semantic targeting")
+	cmd.Flags().String("label", "", "ARIA label for semantic targeting")
+	cmd.Flags().Bool("exact", false, "Require exact match for semantic targeting")
+	return cmd
 }
 
 func newDragCmd() *cobra.Command {
@@ -2390,6 +2630,76 @@ func newDevtoolsStartCmd() *cobra.Command {
 			fmt.Println(result.Message)
 		},
 	}
+}
+
+func newFindCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "find",
+		Short: "Find elements by semantic criteria",
+		Args:  cobra.NoArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensureDaemon(); err != nil {
+				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
+				os.Exit(1)
+			}
+
+			role, _ := cmd.Flags().GetString("role")
+			text, _ := cmd.Flags().GetString("text")
+			label, _ := cmd.Flags().GetString("label")
+			placeholder, _ := cmd.Flags().GetString("placeholder")
+			exact, _ := cmd.Flags().GetBool("exact")
+
+			params := map[string]interface{}{}
+			if role != "" {
+				params["role"] = role
+			}
+			if text != "" {
+				params["text"] = text
+			}
+			if label != "" {
+				params["label"] = label
+			}
+			if placeholder != "" {
+				params["placeholder"] = placeholder
+			}
+			if exact {
+				params["exact"] = exact
+			}
+
+			resp, err := cli.Call("find", params)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
+
+			var result protocol.FindResult
+			json.Unmarshal(resp.Result, &result)
+
+			if len(result.Elements) == 0 {
+				fmt.Println("### No elements found")
+				return
+			}
+
+			fmt.Printf("### Found %d element(s)\n", len(result.Elements))
+			for _, el := range result.Elements {
+				text := el.Text
+				if len(text) > 60 {
+					text = text[:60] + "..."
+				}
+				fmt.Printf("- [ref=%s] <%s> %q\n", el.Ref, el.TagName, text)
+			}
+		},
+	}
+	cmd.Flags().String("role", "", "ARIA role (button, link, textbox, checkbox, etc.)")
+	cmd.Flags().String("text", "", "Element text content (partial match)")
+	cmd.Flags().String("label", "", "ARIA label (partial match)")
+	cmd.Flags().String("placeholder", "", "Input placeholder (partial match)")
+	cmd.Flags().Bool("exact", false, "Require exact matches")
+	return cmd
 }
 
 func newDevicesCmd() *cobra.Command {

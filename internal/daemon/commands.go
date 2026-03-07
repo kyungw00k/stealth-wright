@@ -123,6 +123,7 @@ func (s *Server) registerCommands() {
 	s.commands.Register("video-start", s.cmdVideoStart)
 	s.commands.Register("video-stop", s.cmdVideoStop)
 	s.commands.Register("devtools-start", s.cmdDevtoolsStart)
+	s.commands.Register("find", s.cmdFind)
 	s.commands.Register("stop", s.cmdStop)
 }
 
@@ -222,6 +223,108 @@ func (s *Server) resolveSelector(ref string) (string, error) {
 
 	// Otherwise treat as a direct selector
 	return ref, nil
+}
+
+// findBySemantics filters snapshot elements by role/text/label/placeholder criteria.
+func findBySemantics(elements []protocol.ElementInfo, role, text, label, placeholder string, exact bool) []protocol.ElementInfo {
+	roleTagMap := map[string][]string{
+		"heading":   {"h1", "h2", "h3", "h4", "h5", "h6"},
+		"link":      {"a"},
+		"checkbox":  {"input"},
+		"radio":     {"input"},
+		"textbox":   {"input", "textarea"},
+		"searchbox": {"input"},
+		"combobox":  {"select"},
+		"listbox":   {"select"},
+		"button":    {"button"},
+		"listitem":  {"li"},
+		"paragraph": {"p"},
+	}
+
+	matchStr := func(haystack, needle string) bool {
+		if exact {
+			return strings.EqualFold(haystack, needle)
+		}
+		return strings.Contains(strings.ToLower(haystack), strings.ToLower(needle))
+	}
+
+	var matches []protocol.ElementInfo
+	for _, el := range elements {
+		if role != "" {
+			tags := roleTagMap[role]
+			if len(tags) > 0 {
+				tagMatched := false
+				for _, t := range tags {
+					if el.TagName == t {
+						tagMatched = true
+						break
+					}
+				}
+				if !tagMatched {
+					continue
+				}
+			}
+		}
+		if text != "" && !matchStr(el.Text, text) {
+			continue
+		}
+		if label != "" && !matchStr(el.Attributes["aria-label"], label) {
+			continue
+		}
+		if placeholder != "" && !matchStr(el.Attributes["placeholder"], placeholder) {
+			continue
+		}
+		matches = append(matches, el)
+	}
+	return matches
+}
+
+// resolveRef resolves a ref or semantic criteria to a CSS selector.
+func (s *Server) resolveRef(ref, role, text, label, placeholder string, exact bool) (string, error) {
+	if ref != "" {
+		return s.resolveSelector(ref)
+	}
+	if role != "" || text != "" || label != "" || placeholder != "" {
+		s.mu.RLock()
+		snap := s.currentSnapshot
+		s.mu.RUnlock()
+
+		if snap == nil {
+			return "", ErrNoSnapshot
+		}
+
+		matches := findBySemantics(snap.Elements, role, text, label, placeholder, exact)
+		if len(matches) == 0 {
+			return "", fmt.Errorf("no element found matching criteria")
+		}
+		return matches[0].Selector, nil
+	}
+	return "", fmt.Errorf("ref or semantic criteria (--role/--text/--label/--placeholder) required")
+}
+
+// cmdFind finds elements matching semantic criteria.
+func (s *Server) cmdFind(params json.RawMessage) (interface{}, error) {
+	if _, err := s.requireSession(); err != nil {
+		return nil, err
+	}
+
+	var p protocol.FindParams
+	if len(params) > 0 {
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, err
+		}
+	}
+
+	s.mu.RLock()
+	snap := s.currentSnapshot
+	s.mu.RUnlock()
+
+	if snap == nil {
+		return nil, ErrNoSnapshot
+	}
+
+	matches := findBySemantics(snap.Elements, p.Role, p.Text, p.Label, p.Placeholder, p.Exact)
+	return &protocol.FindResult{Elements: matches}, nil
 }
 
 // Command implementations
@@ -489,7 +592,7 @@ func (s *Server) cmdClick(params json.RawMessage) (interface{}, error) {
 		return nil, err
 	}
 
-	selector, err := s.resolveSelector(p.Ref)
+	selector, err := s.resolveRef(p.Ref, p.Role, p.Text, p.Label, p.Placeholder, p.Exact)
 	if err != nil {
 		return nil, err
 	}
@@ -556,7 +659,7 @@ func (s *Server) cmdFill(params json.RawMessage) (interface{}, error) {
 		return nil, err
 	}
 
-	selector, err := s.resolveSelector(p.Ref)
+	selector, err := s.resolveRef(p.Ref, p.Role, "", p.Label, p.Placeholder, p.Exact)
 	if err != nil {
 		return nil, err
 	}
@@ -586,7 +689,7 @@ func (s *Server) cmdCheck(params json.RawMessage) (interface{}, error) {
 		return nil, err
 	}
 
-	selector, err := s.resolveSelector(p.Ref)
+	selector, err := s.resolveRef(p.Ref, p.Role, p.Text, p.Label, p.Placeholder, p.Exact)
 	if err != nil {
 		return nil, err
 	}
@@ -664,7 +767,7 @@ func (s *Server) cmdHover(params json.RawMessage) (interface{}, error) {
 		return nil, err
 	}
 
-	selector, err := s.resolveSelector(p.Ref)
+	selector, err := s.resolveRef(p.Ref, p.Role, p.Text, p.Label, p.Placeholder, p.Exact)
 	if err != nil {
 		return nil, err
 	}
@@ -713,6 +816,48 @@ func (s *Server) cmdScreenshot(params json.RawMessage) (interface{}, error) {
 			}
 		} else {
 			return nil, fmt.Errorf("element screenshot not supported for this driver")
+		}
+	} else if p.Annotate {
+		// Inject ref number overlays, take screenshot, then remove overlays
+		s.mu.RLock()
+		snap := s.currentSnapshot
+		s.mu.RUnlock()
+
+		if snap != nil && len(snap.Elements) > 0 {
+			type jsElem struct {
+				Ref      string `json:"ref"`
+				Selector string `json:"selector"`
+			}
+			jsElems := make([]jsElem, 0, len(snap.Elements))
+			for _, el := range snap.Elements {
+				jsElems = append(jsElems, jsElem{Ref: el.Ref, Selector: el.Selector})
+			}
+			elemsJSON, _ := json.Marshal(jsElems)
+
+			injectScript := fmt.Sprintf(`(() => {
+  const elements = %s;
+  elements.forEach(({ref, selector}) => {
+    try {
+      const el = document.querySelector(selector);
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) return;
+      const div = document.createElement('div');
+      div.id = '__sw_ref_' + ref;
+      div.textContent = ref;
+      div.style.cssText = 'position:fixed;left:' + rect.left + 'px;top:' + rect.top + 'px;background:rgba(220,38,38,0.9);color:white;font-size:11px;font-family:monospace;padding:1px 4px;border-radius:3px;z-index:2147483647;pointer-events:none;line-height:1.4;';
+      document.body.appendChild(div);
+    } catch(e) {}
+  });
+})()`, string(elemsJSON))
+			inst.Page.Evaluate(injectScript)
+		}
+
+		var shotErr error
+		data, shotErr = inst.Page.Screenshot(opts...)
+		inst.Page.Evaluate(`document.querySelectorAll('[id^="__sw_ref_"]').forEach(el => el.remove())`)
+		if shotErr != nil {
+			return nil, shotErr
 		}
 	} else {
 		var shotErr error
@@ -846,7 +991,7 @@ func (s *Server) cmdDblClick(params json.RawMessage) (interface{}, error) {
 		return nil, err
 	}
 
-	selector, err := s.resolveSelector(p.Ref)
+	selector, err := s.resolveRef(p.Ref, p.Role, p.Text, p.Label, p.Placeholder, p.Exact)
 	if err != nil {
 		return nil, err
 	}
@@ -898,7 +1043,7 @@ func (s *Server) cmdUncheck(params json.RawMessage) (interface{}, error) {
 		return nil, err
 	}
 
-	selector, err := s.resolveSelector(p.Ref)
+	selector, err := s.resolveRef(p.Ref, p.Role, p.Text, p.Label, p.Placeholder, p.Exact)
 	if err != nil {
 		return nil, err
 	}

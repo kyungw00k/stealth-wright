@@ -86,11 +86,30 @@ type GotoParams struct {
 	URL string `json:"url"`
 }
 
+// FindParams represents parameters for the find command.
+type FindParams struct {
+	Role        string `json:"role,omitempty"`
+	Text        string `json:"text,omitempty"`
+	Label       string `json:"label,omitempty"`
+	Placeholder string `json:"placeholder,omitempty"`
+	Exact       bool   `json:"exact,omitempty"`
+}
+
+// FindResult represents the result of the find command.
+type FindResult struct {
+	Elements []ElementInfo `json:"elements"`
+}
+
 // ClickParams represents parameters for the click command.
 type ClickParams struct {
-	Ref       string   `json:"ref"`
-	Button    string   `json:"button,omitempty"` // left, right, middle
-	Modifiers []string `json:"modifiers,omitempty"`
+	Ref         string   `json:"ref,omitempty"`
+	Role        string   `json:"role,omitempty"`
+	Text        string   `json:"text,omitempty"`
+	Label       string   `json:"label,omitempty"`
+	Placeholder string   `json:"placeholder,omitempty"`
+	Exact       bool     `json:"exact,omitempty"`
+	Button      string   `json:"button,omitempty"` // left, right, middle
+	Modifiers   []string `json:"modifiers,omitempty"`
 }
 
 // CookieSetParams represents parameters for the cookie-set command.
@@ -113,9 +132,13 @@ type CookieListParams struct {
 
 // FillParams represents parameters for the fill command.
 type FillParams struct {
-	Ref    string `json:"ref"`
-	Text   string `json:"text"`
-	Submit bool   `json:"submit,omitempty"`
+	Ref         string `json:"ref,omitempty"`
+	Role        string `json:"role,omitempty"`
+	Label       string `json:"label,omitempty"`
+	Placeholder string `json:"placeholder,omitempty"`
+	Exact       bool   `json:"exact,omitempty"`
+	Text        string `json:"text"`
+	Submit      bool   `json:"submit,omitempty"`
 }
 
 // TypeParams represents parameters for the type command.
@@ -131,7 +154,12 @@ type PressParams struct {
 
 // HoverParams represents parameters for the hover command.
 type HoverParams struct {
-	Ref string `json:"ref"`
+	Ref         string `json:"ref,omitempty"`
+	Role        string `json:"role,omitempty"`
+	Text        string `json:"text,omitempty"`
+	Label       string `json:"label,omitempty"`
+	Placeholder string `json:"placeholder,omitempty"`
+	Exact       bool   `json:"exact,omitempty"`
 }
 
 
@@ -141,6 +169,7 @@ type ScreenshotParams struct {
 	Filename string `json:"filename,omitempty"`
 	FullPage bool   `json:"fullPage,omitempty"`
 	Dir      string `json:"dir,omitempty"` // client CWD; files are saved here when no explicit filename
+	Annotate bool   `json:"annotate,omitempty"`
 }
 
 // DragParams represents parameters for the drag command.
