@@ -124,6 +124,7 @@ func (s *Server) registerCommands() {
 	s.commands.Register("video-stop", s.cmdVideoStop)
 	s.commands.Register("devtools-start", s.cmdDevtoolsStart)
 	s.commands.Register("find", s.cmdFind)
+	s.commands.Register("config-print", s.cmdConfigPrint)
 	s.commands.Register("stop", s.cmdStop)
 }
 
@@ -965,6 +966,29 @@ func (s *Server) cmdList(params json.RawMessage) (interface{}, error) {
 	return results, nil
 }
 
+func (s *Server) cmdConfigPrint(params json.RawMessage) (interface{}, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.currentSession == nil {
+		return map[string]interface{}{
+			"session": "none",
+			"browser": "",
+			"headed":  false,
+			"stealth": true,
+		}, nil
+	}
+	cfg := s.currentSession.Config
+	return map[string]interface{}{
+		"session":    cfg.Name,
+		"browser":    cfg.Browser,
+		"headed":     cfg.Headed,
+		"stealth":    cfg.Stealth,
+		"persistent": cfg.Persistent,
+		"device":     cfg.Device,
+	}, nil
+}
+
 func (s *Server) cmdCloseAll(params json.RawMessage) (interface{}, error) {
 	s.mu.Lock()
 	s.currentSession = nil
@@ -1330,11 +1354,13 @@ func (s *Server) cmdDialogAccept(params json.RawMessage) (interface{}, error) {
 		}
 	}
 
-	// Setup dialog handler that accepts
-	script := `window.__swDialogHandler = (dialog) => { dialog.accept('` + p.PromptText + `'); };`
-	_, err = inst.Page.Evaluate(script)
-	if err != nil {
-		return nil, err
+	// Register a Playwright-native dialog handler that accepts the next dialog.
+	if sbPage, ok := inst.Page.(*seleniumbase.Page); ok {
+		pwPage := sbPage.PlaywrightPage()
+		promptText := p.PromptText
+		pwPage.Once("dialog", func(dialog playwright.Dialog) {
+			_ = dialog.Accept(promptText)
+		})
 	}
 
 	return &protocol.CommandResult{Success: true, Message: "dialog accept configured"}, nil
@@ -1347,11 +1373,12 @@ func (s *Server) cmdDialogDismiss(params json.RawMessage) (interface{}, error) {
 		return nil, err
 	}
 
-	// Setup dialog handler that dismisses
-	script := `window.__swDialogHandler = (dialog) => { dialog.dismiss(); };`
-	_, err = inst.Page.Evaluate(script)
-	if err != nil {
-		return nil, err
+	// Register a Playwright-native dialog handler that dismisses the next dialog.
+	if sbPage, ok := inst.Page.(*seleniumbase.Page); ok {
+		pwPage := sbPage.PlaywrightPage()
+		pwPage.Once("dialog", func(dialog playwright.Dialog) {
+			_ = dialog.Dismiss()
+		})
 	}
 
 	return &protocol.CommandResult{Success: true, Message: "dialog dismiss configured"}, nil

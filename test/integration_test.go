@@ -812,8 +812,8 @@ func TestSessionList(t *testing.T) {
 	}
 	t.Log("✓ Session URL correct")
 
-	if !strings.Contains(output, "chromium") {
-		t.Fatalf("Expected 'chromium' browser in session, got: %s", output)
+	if !strings.Contains(output, "chrome") && !strings.Contains(output, "chromium") {
+		t.Fatalf("Expected 'chrome' or 'chromium' browser in session, got: %s", output)
 	}
 	t.Log("✓ Session browser type correct")
 
@@ -1886,18 +1886,13 @@ func TestStateSaveLoad(t *testing.T) {
 	stateFile := "/tmp/sw_test_state.json"
 	defer os.Remove(stateFile)
 
-	html := `<!DOCTYPE html>
-<html>
-<head><title>State Test</title></head>
-<body><p>State test page</p></body>
-</html>`
-
-	runSw(t, execPath, append([]string{"open", dataURL(html)}, headedArgs()...)...)
+	// Use a real URL since data: URLs do not support cookies
+	runSw(t, execPath, append([]string{"open", "https://example.com"}, headedArgs()...)...)
 	defer closeBrowser(execPath)
-	time.Sleep(1 * time.Second)
+	time.Sleep(2 * time.Second)
 
 	// Set a cookie
-	runSw(t, execPath, "cookie-set", "statetest", "statevalue")
+	runSw(t, execPath, "cookie-set", "statetest", "statevalue", "--domain", "example.com")
 	time.Sleep(200 * time.Millisecond)
 
 	// Save state

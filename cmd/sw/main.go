@@ -134,6 +134,7 @@ undetected browser automation.`,
 		newDevtoolsStartCmd(),
 		newDevicesCmd(),
 		newFindCmd(),
+		newConfigPrintCmd(),
 		newVideoStartCmd(),
 		newVideoStopCmd(),
 		newDaemonCmd(),
@@ -1002,6 +1003,30 @@ func newScreenshotCmd() *cobra.Command {
 	cmd.Flags().Bool("full-page", false, "Capture full page")
 	cmd.Flags().Bool("annotate", false, "Overlay ref numbers on elements")
 	return cmd
+}
+
+func newConfigPrintCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "config-print",
+		Short: "Print current session configuration as JSON",
+		Run: func(cmd *cobra.Command, args []string) {
+			if !cli.CanConnect() {
+				fmt.Println(`{"session":"none","browser":"","headed":false,"stealth":true,"persistent":false,"device":""}`)
+				return
+			}
+			resp, err := cli.Call("config-print", nil)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			data, err := json.Marshal(resp)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error marshaling response:", err)
+				os.Exit(1)
+			}
+			fmt.Println(string(data))
+		},
+	}
 }
 
 func newListCmd() *cobra.Command {
