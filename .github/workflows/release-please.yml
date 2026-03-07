@@ -1,4 +1,4 @@
-name: release
+name: release-please
 
 on:
   push:
@@ -7,23 +7,14 @@ on:
 
 permissions:
   contents: write
-  issues: write
   pull-requests: write
 
 jobs:
-  release:
+  release-please:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: googleapis/release-please-action@v4
         with:
-          fetch-depth: 0
-          persist-credentials: false
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: lts/*
-
-      - name: Release
-        run: npx --yes semantic-release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+          token: ${{ secrets.GITHUB_TOKEN }}
