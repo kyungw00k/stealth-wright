@@ -328,13 +328,20 @@ Communication between CLI and Daemon uses JSON-RPC 2.0 over Unix sockets.
 
 ## AI Skill System
 
-For AI coding agents (Claude Code, GitHub Copilot, etc.), use the skill file:
+For AI coding agents (Claude Code, GitHub Copilot, etc.), install the skill into your project:
+
+```bash
+# Install sw skill files to .claude/skills/sw/
+sw install --skills
+```
+
+This copies the built-in `SKILL.md` to `.claude/skills/sw/` so AI agents can discover how to use `sw`. Then reference it in your project's `CLAUDE.md`:
 
 ```markdown
-# In your project's CLAUDE.md or similar:
+# In your project's CLAUDE.md:
 
 Use the sw skill for browser automation tasks.
-Skill location: skills/sw/SKILL.md
+Skill location: .claude/skills/sw/SKILL.md
 ```
 
 ### Example Usage with Claude Code
