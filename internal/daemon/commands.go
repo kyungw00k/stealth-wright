@@ -2168,7 +2168,7 @@ func findPlaywrightFFmpeg() (string, error) {
 	playwrightGoBase := filepath.Join(cacheBase, "ms-playwright-go")
 	entries, err := os.ReadDir(playwrightGoBase)
 	if err != nil {
-		return "", fmt.Errorf("playwright-go cache not found at %s: %w", playwrightGoBase, err)
+		return "", fmt.Errorf("playwright-go cache not found at %s — run 'sw install' to install browsers: %w", playwrightGoBase, err)
 	}
 
 	var browsersJSONPath string
@@ -2180,7 +2180,7 @@ func findPlaywrightFFmpeg() (string, error) {
 		}
 	}
 	if browsersJSONPath == "" {
-		return "", fmt.Errorf("browsers.json not found in playwright-go cache")
+		return "", fmt.Errorf("browsers.json not found in playwright-go cache at %s — run 'sw install' to install browsers", playwrightGoBase)
 	}
 
 	data, err := os.ReadFile(browsersJSONPath)
@@ -2206,7 +2206,7 @@ func findPlaywrightFFmpeg() (string, error) {
 		}
 	}
 	if revision == "" {
-		return "", fmt.Errorf("ffmpeg entry not found in browsers.json")
+		return "", fmt.Errorf("ffmpeg entry not found in %s — run 'sw install-browser' to install ffmpeg", browsersJSONPath)
 	}
 
 	var binaryName string
@@ -2221,7 +2221,7 @@ func findPlaywrightFFmpeg() (string, error) {
 
 	ffmpegPath := filepath.Join(cacheBase, "ms-playwright", "ffmpeg-"+revision, binaryName)
 	if _, err := os.Stat(ffmpegPath); err != nil {
-		return "", fmt.Errorf("ffmpeg binary not found at %s: %w", ffmpegPath, err)
+		return "", fmt.Errorf("ffmpeg binary not found at %s — run 'sw install-browser' to install it: %w", ffmpegPath, err)
 	}
 
 	return ffmpegPath, nil

@@ -39,7 +39,7 @@ playwright-cli 커맨드·옵션 대비 sw의 구현 커버리지 조사 결과.
 
 | Task | 내용 | Status |
 |------|------|--------|
-| 2.1 | `sw open` → `sw video-start` → 페이지 조작 → `sw video-stop` E2E 동작 확인 | cc:TODO |
+| 2.1 | `sw open` → `sw video-start` → 페이지 조작 → `sw video-stop` E2E 동작 확인 | cc:완료 |
 | 2.2 | ffmpeg 경로 탐색 (`findPlaywrightFFmpeg`) 실패 시 에러 메시지 개선 | cc:TODO |
 | 2.3 | 비디오 통합 테스트 추가 (video-start / video-stop / 파일 생성 확인) | cc:TODO |
 

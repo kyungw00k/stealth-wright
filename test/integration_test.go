@@ -2018,3 +2018,58 @@ func TestSnapshotFilename(t *testing.T) {
 
 	t.Log("✓ TestSnapshotFilename passed!")
 }
+
+func TestVideoRecording(t *testing.T) {
+	execPath := getExecPath(t)
+	cleanupDaemon(execPath)
+
+	runSw(t, execPath, "open", "https://example.com")
+	defer closeBrowser(execPath)
+	time.Sleep(2 * time.Second)
+
+	// Start recording
+	out := runSw(t, execPath, "video-start")
+	t.Logf("video-start: %s", out)
+
+	// Extract output path from message
+	var videoPath string
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasSuffix(strings.TrimSpace(line), ".webm") {
+			videoPath = strings.TrimSpace(line)
+			// strip leading "output: " if present
+			if idx := strings.Index(videoPath, "/"); idx >= 0 {
+				videoPath = videoPath[idx:]
+			}
+			break
+		}
+	}
+	if videoPath == "" {
+		t.Fatal("could not parse video output path from video-start output")
+	}
+	t.Logf("Video path: %s", videoPath)
+
+	// Do some actions while recording
+	runSw(t, execPath, "mousewheel", "0", "300")
+	time.Sleep(500 * time.Millisecond)
+	runSw(t, execPath, "mousewheel", "0", "300")
+	time.Sleep(500 * time.Millisecond)
+
+	// Stop recording
+	stopOut := runSw(t, execPath, "video-stop")
+	t.Logf("video-stop: %s", stopOut)
+
+	// Verify file exists and has content
+	info, err := os.Stat(videoPath)
+	if err != nil {
+		t.Fatalf("video file not found at %s: %v", videoPath, err)
+	}
+	if info.Size() == 0 {
+		t.Fatalf("video file is empty: %s", videoPath)
+	}
+	t.Logf("✓ Video file size: %d bytes", info.Size())
+
+	// Cleanup
+	os.Remove(videoPath)
+
+	t.Log("✓ TestVideoRecording passed!")
+}

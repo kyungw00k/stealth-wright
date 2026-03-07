@@ -499,6 +499,16 @@ func DefaultSocketPath(sessionName string) string {
 	return filepath.Join(os.TempDir(), "sw", hash, sessionName+".sock")
 }
 
+// DefaultPidPath returns the pid file path for the given session name.
+func DefaultPidPath(sessionName string) string {
+	if sessionName == "" {
+		sessionName = "default"
+	}
+	cwd, _ := os.Getwd()
+	hash := fmt.Sprintf("%08x", len(cwd))
+	return filepath.Join(os.TempDir(), "sw", hash, sessionName+".pid")
+}
+
 // DefaultBaseDir returns the default base directory (CWD-relative .sw).
 func DefaultBaseDir() string {
 	cwd, _ := os.Getwd()

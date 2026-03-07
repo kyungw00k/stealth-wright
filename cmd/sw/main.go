@@ -217,9 +217,14 @@ func newDaemonStartCmd() *cobra.Command {
 				fmt.Fprintln(os.Stderr, "failed to start daemon:", err)
 				os.Exit(1)
 			}
+			// Write pid file so clients can display the daemon pid
+			pidPath := client.DefaultPidPath(sessionName)
+			os.MkdirAll(filepath.Dir(pidPath), 0700)
+			os.WriteFile(pidPath, []byte(strconv.Itoa(os.Getpid())), 0600)
 			w := bufio.NewWriter(os.Stdout)
 			daemon.WriteSuccess(w, fmt.Sprintf("Daemon listening on %s", socketPath))
 			srv.WaitForShutdown()
+			os.Remove(pidPath)
 		},
 	}
 }
@@ -324,9 +329,27 @@ func printRanCode(jsCode string) {
 	fmt.Printf("```js\n%s\n```\n", jsCode)
 }
 
+// readDaemonPid reads the daemon pid from the pid file, returns 0 if unavailable.
+func readDaemonPid(sessionName string) int {
+	data, err := os.ReadFile(client.DefaultPidPath(sessionName))
+	if err != nil {
+		return 0
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		return 0
+	}
+	return pid
+}
+
 // printBrowserOpened prints the browser opened message (playwright-cli format)
 func printBrowserOpened(sessionName, browserType, userDataDir string, headed bool) {
-	fmt.Printf("### Browser `%s` opened.\n", sessionName)
+	pid := readDaemonPid(sessionName)
+	if pid > 0 {
+		fmt.Printf("### Browser `%s` opened with pid %d.\n", sessionName, pid)
+	} else {
+		fmt.Printf("### Browser `%s` opened.\n", sessionName)
+	}
 	fmt.Printf("- %s:\n", sessionName)
 	fmt.Printf("  - browser-type: %s\n", browserType)
 	fmt.Printf("  - user-data-dir: %s\n", userDataDir)
