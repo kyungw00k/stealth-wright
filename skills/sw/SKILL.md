@@ -41,23 +41,55 @@ sw devices                 # list all available devices for emulation
 ### Page Snapshots & Screenshots
 
 ```bash
-sw snapshot                # capture page snapshot with element refs
-sw screenshot [ref]        # screenshot page or specific element
-sw screenshot --filename <file> [ref]  # save screenshot to file
-sw screenshot --full-page  # full page screenshot
+sw snapshot                          # capture page snapshot with element refs
+sw screenshot [ref]                  # screenshot page or specific element
+sw screenshot --filename <file>      # save screenshot to file
+sw screenshot --full-page            # full page screenshot
+sw screenshot --annotate             # screenshot with ref number overlays on each element
 ```
 
 ### Interaction Commands
 
+Ref-based (requires prior `sw snapshot`):
 ```bash
 sw click <ref> [button]    # click element (button: left/right/middle, default: left)
 sw dblclick <ref>          # double-click element
 sw fill <ref> <text>       # fill text into element
-sw type <text>             # type into focused element
-sw press <key>             # press key (Enter, Tab, ArrowDown, etc.)
 sw hover <ref>             # hover over element
 sw check <ref>             # check checkbox
 sw uncheck <ref>           # uncheck checkbox
+```
+
+Semantic (no snapshot needed):
+```bash
+sw click --role button --text "Submit"       # click by ARIA role + text
+sw click --label "Close"                     # click by aria-label
+sw fill --label "Email" "user@example.com"   # fill by label
+sw fill --placeholder "Search" "query"       # fill by placeholder
+sw hover --role link --text "About"          # hover by role + text
+sw check --label "Remember me"               # check by label
+sw uncheck --label "Subscribe"               # uncheck by label
+
+# Find elements matching semantic criteria
+sw find --role button                        # list all buttons
+sw find --text "Sign In"                     # find by text
+sw find --label "Username"                   # find by aria-label
+sw find --placeholder "Password"             # find by placeholder
+```
+
+Semantic flags (work on click/fill/hover/check/uncheck/find):
+```
+--role <aria-role>    ARIA role: button, link, textbox, checkbox, heading, combobox, etc.
+--text <string>       Visible text content (partial match by default)
+--label <string>      aria-label attribute (partial match by default)
+--placeholder <string> Input placeholder (partial match by default)
+--exact               Require exact string matches
+```
+
+Other interaction commands:
+```bash
+sw type <text>             # type into focused element
+sw press <key>             # press key (Enter, Tab, ArrowDown, etc.)
 sw select <ref> <value>    # select option from dropdown
 ```
 
@@ -144,6 +176,20 @@ sw state-load <file>       # load browser state from file
 sw delete-data             # clear all browser data
 ```
 
+### Video Recording
+
+```bash
+sw video-start             # start recording (saves WebM to current directory)
+sw video-stop              # stop recording and save file
+```
+
+### Developer Tools
+
+```bash
+sw install-browser [--browser <type>]  # install browser binaries (chromium/firefox/webkit)
+sw devtools-start                      # open browser DevTools (headed+Chromium only)
+```
+
 ### Sessions
 
 ```bash
@@ -204,24 +250,54 @@ All key options can be set via environment variables. CLI flags always take prec
 
 Legacy alias: `PLAYWRIGHT_CLI_SESSION` is also accepted for `SW_SESSION`.
 
-## Element References
+## Targeting Elements
 
-After running `sw snapshot`, elements are assigned references in the format `eN` where N is a number:
+### Method 1: Ref-based (via snapshot)
+
+Run `sw snapshot` to assign `[ref=eN]` to all visible elements. The snapshot shows the ARIA tree:
 
 ```
-- e1: <input> placeholder="Email"
-- e2: <input> type="password"
-- e3: <button> "Sign In"
-- e4: <a> href="/forgot"
+- textbox "Email" [ref=e1]
+- textbox "Password" [ref=e2]
+- button "Sign In" [ref=e3]
+- link "Forgot password" [ref=e4]
 ```
 
-Use these refs in interaction commands:
-
+Use the ref in commands:
 ```bash
 sw fill e1 "user@example.com"
 sw fill e2 "password123"
 sw click e3
 ```
+
+### Method 2: Semantic locators (no snapshot needed)
+
+Target elements by their ARIA role, visible text, label, or placeholder — without running `sw snapshot` first:
+
+```bash
+sw fill --label "Email" "user@example.com"
+sw fill --label "Password" "secret"
+sw click --role button --text "Sign In"
+```
+
+Use `sw find` to discover what elements are available:
+```bash
+sw find --role button
+# → ### Found 2 element(s)
+# → - [ref=e3] <button> "Sign In"
+# → - [ref=e8] <button> "Register"
+```
+
+### Method 3: Annotated screenshot
+
+For multimodal AI workflows, capture a screenshot with ref numbers overlaid on every element:
+
+```bash
+sw screenshot --annotate
+# → saves page-2026-...png with red [eN] labels on each element
+```
+
+This lets a vision model identify elements by ref without reading the ARIA snapshot text.
 
 ## Stealth Mode
 
@@ -272,14 +348,28 @@ The `--device` flag sets the user agent, viewport size, device scale factor, tou
 
 ## Example Workflows
 
-### Form Submission
+### Form Submission (ref-based)
 
 ```bash
 sw open https://example.com/login
 sw snapshot
+# → - textbox "Email" [ref=e1]
+# → - textbox "Password" [ref=e2]
+# → - button "Sign In" [ref=e3]
 sw fill e1 "user@example.com"
 sw fill e2 "password123"
 sw click e3
+sw snapshot
+sw close
+```
+
+### Form Submission (semantic — no snapshot needed)
+
+```bash
+sw open https://example.com/login
+sw fill --label "Email" "user@example.com"
+sw fill --label "Password" "password123"
+sw click --role button --text "Sign In"
 sw snapshot
 sw close
 ```
@@ -288,12 +378,31 @@ sw close
 
 ```bash
 sw open https://example.com
-sw snapshot
-sw click e5
-sw fill e2 "search term"
+sw fill --placeholder "Search" "query"
 sw press Enter
 sw screenshot result.png
 sw close
+```
+
+### Annotated Screenshot for AI Vision
+
+```bash
+sw open https://example.com
+sw screenshot --annotate
+# → saves screenshot with [e1], [e2], ... overlaid on each element
+# AI model can now reference elements by their visible label
+```
+
+### Video Recording
+
+```bash
+sw open https://example.com
+sw video-start
+sw snapshot
+sw click e3
+sw fill e1 "hello"
+sw video-stop
+# → saves video-2026-...webm in current directory
 ```
 
 ### Parallel Sessions
@@ -312,8 +421,8 @@ sw close-all
 ```bash
 # Save state
 sw open https://example.com
-sw fill e1 "user"
-sw press Enter
+sw fill --label "Username" "user"
+sw click --role button --text "Login"
 sw state-save session.json
 
 # Later: restore state

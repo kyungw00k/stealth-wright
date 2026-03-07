@@ -470,34 +470,48 @@ require (
 
 ---
 
-## 7. 구현 로드맵
+## 7. 구현 현황
 
-### Phase 1: MVP (Week 1-2)
-- [ ] 프로젝트 스캐폴딩
-- [ ] Browser 인터페이스 정의
-- [ ] seleniumbase-go 드라이버 구현
-- [ ] 기본 CLI 구조 (cobra)
-- [ ] Daemon 서버 (Unix socket)
-- [ ] 핵심 명령: `open`, `close`, `goto`, `snapshot`, `click`, `fill`
+### Phase 1: MVP ✅
+- [x] 프로젝트 스캐폴딩
+- [x] Browser 인터페이스 정의 (`internal/browser/`)
+- [x] seleniumbase-go 드라이버 구현 (`internal/drivers/seleniumbase/`)
+- [x] 기본 CLI 구조 (cobra, `cmd/sw/main.go`)
+- [x] Daemon 서버 (Unix socket JSON-RPC, `internal/daemon/`)
+- [x] 핵심 명령: `open`, `close`, `goto`, `snapshot`, `click`, `fill`, `hover`, `check`, `uncheck`, `press`, `type`, `drag`, `select`, `upload`, `eval`, `resize`
+- [x] Mouse/Keyboard 명령: `mousemove`, `mousedown`, `mouseup`, `mousewheel`, `keydown`, `keyup`
+- [x] Storage: `cookie-*`, `localstorage-*`, `sessionstorage-*`, `state-save`, `state-load`, `delete-data`
+- [x] Network: `network`, `console`, `route`, `unroute`, `route-list`
+- [x] Tabs: `tab-list`, `tab-new`, `tab-close`, `tab-select`
+- [x] Tracing: `tracing-start`, `tracing-stop`
+- [x] Session: `list`, `close-all`, `kill-all`, `daemon`
 
-### Phase 2: Stealth Mode (Week 3-4)
-- [ ] Stealth 모듈 구현
-- [ ] Fingerprint randomization
-- [ ] Hide WebDriver
-- [ ] Human-like behavior (typing, mouse)
-- [ ] `stealth` 명령어
+### Phase 2: Stealth Mode ✅
+- [x] seleniumbase-go 통합으로 Stealth 기본 활성화
+- [x] `--stealth` / `--no-stealth` 플래그
+- [x] `SW_STEALTH` 환경변수 지원
 
-### Phase 3: 기능 확장 (Week 5-6)
-- [ ] 나머지 명령 구현
-- [ ] Persistent session
-- [ ] 설정 파일 지원
-- [ ] AI Skill 시스템
+### Phase 3: 기능 확장 ✅
+- [x] Persistent session (`--persistent`, `--profile`)
+- [x] 설정 파일 지원 (`--config`)
+- [x] AI Skill 시스템 (`skills/sw/SKILL.md`)
+- [x] 디바이스 에뮬레이션 (`--device`, `sw devices`)
+- [x] 세션 격리 (named sessions, per-session socket/pid)
+- [x] Video 레코딩 (`video-start`, `video-stop` — CDP screencast + ffmpeg → WebM)
+- [x] `install-browser` 명령 (playwright-go `Install()` API)
+- [x] `devtools-start` / `show` (CDP F12 키 시뮬레이션)
+- [x] `pdf` 명령
 
-### Phase 4: 안정화 (Week 7-8)
-- [ ] 에러 핸들링 개선
-- [ ] Graceful shutdown
-- [ ] 테스트 코드
-- [ ] 문서화
+### Phase 4: AI-Native 기능 ✅
+- [x] Semantic Locators (`--role`, `--text`, `--label`, `--placeholder`, `--exact`)
+  - `click`, `fill`, `hover`, `check`, `uncheck`, `dblclick` 에서 ref 없이 시맨틱 대상 지정 가능
+- [x] `find` 명령 — 현재 스냅샷에서 시맨틱 기준 요소 검색
+- [x] Annotated Screenshot (`screenshot --annotate`) — JS overlay로 ref 번호를 페이지에 주입 후 스크린샷
+- [x] 통합 테스트 스위트 (`test/integration_test.go`, 40+ 테스트)
+
+### 제한사항 / Blocked
+- `open --extension`: playwright-go가 `ExtensionContextFactory` 미노출 → 미구현
+- `devtools-start`: playwright-go에 DevTools API 없음 → CDP F12 키 시뮬레이션으로 우회 (headed+Chromium 한정)
 
 ---
 
