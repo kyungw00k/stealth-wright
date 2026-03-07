@@ -122,6 +122,7 @@ func (s *Server) registerCommands() {
 	s.commands.Register("unroute", s.cmdUnroute)
 	s.commands.Register("video-start", s.cmdVideoStart)
 	s.commands.Register("video-stop", s.cmdVideoStop)
+	s.commands.Register("devtools-start", s.cmdDevtoolsStart)
 	s.commands.Register("stop", s.cmdStop)
 }
 
@@ -1841,20 +1842,51 @@ func (s *Server) cmdRunCode(params json.RawMessage) (interface{}, error) {
 	return &protocol.CommandResult{Success: true, Message: fmt.Sprintf("%v", result)}, nil
 }
 
-// cmdShow brings the browser window to the front.
+// cmdShow is an alias for cmdDevtoolsStart (matching playwright-cli behavior).
 func (s *Server) cmdShow(params json.RawMessage) (interface{}, error) {
+	return s.cmdDevtoolsStart(params)
+}
+
+// cmdDevtoolsStart opens the browser DevTools panel via CDP F12 key simulation.
+// Only effective in headed mode on Chromium-based browsers.
+func (s *Server) cmdDevtoolsStart(params json.RawMessage) (interface{}, error) {
 	inst, err := s.requireSession()
 	if err != nil {
 		return nil, err
 	}
 
-	if sbPage, ok := inst.Page.(*seleniumbase.Page); ok {
-		if err := sbPage.PlaywrightPage().BringToFront(); err != nil {
-			return nil, err
-		}
+	sbPage, ok := inst.Page.(*seleniumbase.Page)
+	if !ok {
+		return &protocol.CommandResult{
+			Success: true,
+			Message: "DevTools not supported for this browser driver. Use --headed mode with Chromium.",
+		}, nil
+	}
+	pwPage := sbPage.PlaywrightPage()
+
+	cdpSession, err := pwPage.Context().NewCDPSession(pwPage)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create CDP session: %w", err)
+	}
+	defer cdpSession.Detach()
+
+	// Send F12 keyDown then keyUp to open DevTools
+	keyParams := map[string]any{
+		"type":                  "keyDown",
+		"key":                   "F12",
+		"code":                  "F12",
+		"windowsVirtualKeyCode": 123,
+		"nativeVirtualKeyCode":  123,
+	}
+	if _, err := cdpSession.Send("Input.dispatchKeyEvent", keyParams); err != nil {
+		return nil, fmt.Errorf("failed to dispatch F12 keyDown: %w", err)
+	}
+	keyParams["type"] = "keyUp"
+	if _, err := cdpSession.Send("Input.dispatchKeyEvent", keyParams); err != nil {
+		return nil, fmt.Errorf("failed to dispatch F12 keyUp: %w", err)
 	}
 
-	return &protocol.CommandResult{Success: true, Message: "window brought to front"}, nil
+	return &protocol.CommandResult{Success: true, Message: "DevTools opened"}, nil
 }
 
 // Console command

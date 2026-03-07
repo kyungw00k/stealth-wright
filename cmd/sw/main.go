@@ -130,6 +130,8 @@ undetected browser automation.`,
 		newRouteListCmd(),
 		newUnrouteCmd(),
 		newInstallCmd(),
+		newInstallBrowserCmd(),
+		newDevtoolsStartCmd(),
 		newDevicesCmd(),
 		newVideoStartCmd(),
 		newVideoStopCmd(),
@@ -280,7 +282,9 @@ func printSnapshot(result *protocol.SnapshotResult) {
 	fmt.Println("### Page")
 	fmt.Printf("- Page URL: %s\n", result.PageURL)
 	fmt.Printf("- Page Title: %s\n", result.PageTitle)
-	fmt.Printf("- Console: %d errors, %d warnings\n", result.ConsoleErrors, result.ConsoleWarnings)
+	if result.ConsoleErrors > 0 || result.ConsoleWarnings > 0 {
+		fmt.Printf("- Console: %d errors, %d warnings\n", result.ConsoleErrors, result.ConsoleWarnings)
+	}
 
 	if result.Filename != "" {
 		relPath := toRelPath(cwd, result.Filename)
@@ -555,9 +559,9 @@ func newSnapshotCmd() *cobra.Command {
 
 func newClickCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "click <ref>",
+		Use:   "click <ref> [button]",
 		Short: "Click element",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.RangeArgs(1, 2),
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := ensureDaemon(); err != nil {
 				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
@@ -566,6 +570,9 @@ func newClickCmd() *cobra.Command {
 
 			modifiers, _ := cmd.Flags().GetStringArray("modifiers")
 			params := map[string]interface{}{"ref": args[0]}
+			if len(args) > 1 {
+				params["button"] = args[1]
+			}
 			if len(modifiers) > 0 {
 				params["modifiers"] = modifiers
 			}
@@ -809,9 +816,9 @@ func newListCmd() *cobra.Command {
 
 func newDblClickCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "dblclick <ref>",
+		Use:   "dblclick <ref> [button]",
 		Short: "Double-click element",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.RangeArgs(1, 2),
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := ensureDaemon(); err != nil {
 				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
@@ -820,6 +827,9 @@ func newDblClickCmd() *cobra.Command {
 
 			modifiers, _ := cmd.Flags().GetStringArray("modifiers")
 			params := map[string]interface{}{"ref": args[0]}
+			if len(args) > 1 {
+				params["button"] = args[1]
+			}
 			if len(modifiers) > 0 {
 				params["modifiers"] = modifiers
 			}
@@ -2304,6 +2314,59 @@ func newInstallCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&installSkills, "skills", false, "install skills for claude / github copilot")
 	return cmd
+}
+
+func newInstallBrowserCmd() *cobra.Command {
+	var browser string
+	cmd := &cobra.Command{
+		Use:   "install-browser",
+		Short: "Install browser",
+		Args:  cobra.NoArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			opts := &playwright.RunOptions{
+				Stdout: os.Stdout,
+				Stderr: os.Stderr,
+			}
+			if browser != "" {
+				opts.Browsers = []string{browser}
+			}
+			if err := playwright.Install(opts); err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+		},
+	}
+	cmd.Flags().StringVar(&browser, "browser", "", "Browser to install: chrome, firefox, webkit, msedge")
+	return cmd
+}
+
+func newDevtoolsStartCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "devtools-start",
+		Short: "Show browser DevTools",
+		Args:  cobra.NoArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := ensureDaemon(); err != nil {
+				fmt.Fprintln(os.Stderr, "Failed to connect to daemon:", err)
+				os.Exit(1)
+			}
+			resp, err := cli.Call("devtools-start", nil)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			if resp.Error != nil {
+				fmt.Fprintln(os.Stderr, "Error:", resp.Error.Message)
+				os.Exit(1)
+			}
+			var result protocol.CommandResult
+			if err := json.Unmarshal(resp.Result, &result); err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			fmt.Println(result.Message)
+		},
+	}
 }
 
 func newDevicesCmd() *cobra.Command {
