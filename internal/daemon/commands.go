@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -598,44 +599,135 @@ func (s *Server) cmdClick(params json.RawMessage) (interface{}, error) {
 		return nil, err
 	}
 
-	// Use playwright directly for modifiers, non-default button, or force flag.
+	// Look up href/target from the snapshot element attributes (no extra network roundtrip).
+	var snapHref, snapTarget string
+	if p.Ref != "" {
+		s.mu.RLock()
+		snap := s.currentSnapshot
+		s.mu.RUnlock()
+		if snap != nil {
+			for _, el := range snap.Elements {
+				if el.Ref == p.Ref {
+					snapHref = el.Attributes["href"]
+					snapTarget = el.Attributes["target"]
+					break
+				}
+			}
+		}
+	}
+
+	// Use playwright directly for all clicks.
 	if sbPage, ok := inst.Page.(*seleniumbase.Page); ok {
 		pwPage := sbPage.PlaywrightPage()
-		opts := playwright.PageClickOptions{}
-		if p.Button != "" {
+
+		if p.Force {
+			// Force click: bypass all actionability checks.
+			opts := playwright.PageClickOptions{Force: playwright.Bool(true)}
+			if err := pwPage.Click(selector, opts); err != nil {
+				return nil, err
+			}
+		} else {
+			// If it's a _blank link, navigate directly in current tab.
+			if snapHref != "" && snapTarget == "_blank" {
+				if gotoErr := inst.Page.Goto(snapHref); gotoErr != nil {
+					return nil, gotoErr
+				}
+				goto afterClick
+			}
+
+			// Build click options for fallback path.
+			var mouseButton *playwright.MouseButton
 			switch p.Button {
 			case "right":
-				opts.Button = playwright.MouseButtonRight
+				mouseButton = playwright.MouseButtonRight
 			case "middle":
-				opts.Button = playwright.MouseButtonMiddle
+				mouseButton = playwright.MouseButtonMiddle
 			}
-		}
-		for _, mod := range p.Modifiers {
-			switch mod {
-			case "Alt":
-				opts.Modifiers = append(opts.Modifiers, *playwright.KeyboardModifierAlt)
-			case "Control":
-				opts.Modifiers = append(opts.Modifiers, *playwright.KeyboardModifierControl)
-			case "Meta":
-				opts.Modifiers = append(opts.Modifiers, *playwright.KeyboardModifierMeta)
-			case "Shift":
-				opts.Modifiers = append(opts.Modifiers, *playwright.KeyboardModifierShift)
+			var modKeys []playwright.KeyboardModifier
+			for _, mod := range p.Modifiers {
+				switch mod {
+				case "Alt":
+					modKeys = append(modKeys, *playwright.KeyboardModifierAlt)
+				case "Control":
+					modKeys = append(modKeys, *playwright.KeyboardModifierControl)
+				case "Meta":
+					modKeys = append(modKeys, *playwright.KeyboardModifierMeta)
+				case "Shift":
+					modKeys = append(modKeys, *playwright.KeyboardModifierShift)
+				}
 			}
-		}
-		if p.Force {
-			opts.Force = playwright.Bool(true)
-		}
-		clickErr := pwPage.Click(selector, opts)
-		if clickErr != nil && !p.Force {
-			// Fallback: JS click bypasses sticky-header / obscured-element issues.
-			_, jsErr := inst.Page.Evaluate(
-				fmt.Sprintf("document.querySelector(%q)?.click()", selector),
-			)
-			if jsErr != nil {
-				return nil, clickErr // return original error
+
+			// Scroll element into view and get its bounding rect.
+			// Click at a random point within the rect — more human-like and avoids
+			// actionability check failures from sticky headers / overlays.
+			rectScript := fmt.Sprintf(`(() => {
+				const el = document.querySelector(%q);
+				if (!el) return null;
+				el.scrollIntoView({block: 'center', inline: 'nearest'});
+				const r = el.getBoundingClientRect();
+				return {x: r.left, y: r.top, w: r.width, h: r.height};
+			})()`, selector)
+			rectResult, rectErr := pwPage.Evaluate(rectScript)
+			if rectErr == nil && rectResult != nil {
+				if rect, ok2 := rectResult.(map[string]interface{}); ok2 {
+					toF := func(v interface{}) float64 {
+						switch n := v.(type) {
+						case float64:
+							return n
+						case int:
+							return float64(n)
+						}
+						return 0
+					}
+					rx, ry := toF(rect["x"]), toF(rect["y"])
+					rw, rh := toF(rect["w"]), toF(rect["h"])
+					if rw > 0 && rh > 0 {
+						// Pick a random point inside the element (avoid edges).
+						margin := 4.0
+						if rw < 10 {
+							margin = 1
+						}
+						if rh < 10 {
+							margin = 1
+						}
+						cx := rx + margin + rand.Float64()*(rw-2*margin)
+						cy := ry + margin + rand.Float64()*(rh-2*margin)
+						mouseClickOpts := playwright.MouseClickOptions{
+							Button: playwright.MouseButtonLeft,
+						}
+						if mouseButton != nil {
+							mouseClickOpts.Button = mouseButton
+						}
+						if mouseErr := pwPage.Mouse().Click(cx, cy, mouseClickOpts); mouseErr != nil {
+							// Fallback to href navigation on click failure.
+							if snapHref != "" {
+								if gotoErr := inst.Page.Goto(snapHref); gotoErr != nil {
+									return nil, gotoErr
+								}
+							} else {
+								return nil, mouseErr
+							}
+						}
+						goto afterClick
+					}
+				}
 			}
-		} else if clickErr != nil {
-			return nil, clickErr
+
+			// Fallback if rect evaluation fails: standard Playwright click with timeout.
+			clickFallbackOpts := playwright.PageClickOptions{
+				Timeout:   playwright.Float(5000),
+				Button:    mouseButton,
+				Modifiers: modKeys,
+			}
+			if err := pwPage.Click(selector, clickFallbackOpts); err != nil {
+				if snapHref != "" {
+					if gotoErr := inst.Page.Goto(snapHref); gotoErr != nil {
+						return nil, gotoErr
+					}
+				} else {
+					return nil, err
+				}
+			}
 		}
 	} else {
 		if err := inst.Page.Click(selector); err != nil {
@@ -643,7 +735,8 @@ func (s *Server) cmdClick(params json.RawMessage) (interface{}, error) {
 		}
 	}
 
-	// Wait for any navigation triggered by the click to settle before snapshot.
+afterClick:
+	// Wait for any navigation triggered by the click.
 	if sbPage, ok := inst.Page.(*seleniumbase.Page); ok {
 		pwPage := sbPage.PlaywrightPage()
 		_ = pwPage.WaitForLoadState(playwright.PageWaitForLoadStateOptions{

@@ -66,11 +66,23 @@ func annotateAriaSnapshot(ariaSnapshot string, elements []protocol.ElementInfo) 
 		role := rest[:roleEnd]
 
 		// Extract aria name from quoted string: - role "name" ...
+		// Handles backslash-escaped quotes inside the name (e.g. \"foo\").
 		ariaName := ""
 		if idx := strings.Index(rest, "\""); idx >= 0 {
-			if end := strings.Index(rest[idx+1:], "\""); end >= 0 {
-				ariaName = rest[idx+1 : idx+1+end]
+			i := idx + 1
+			var buf strings.Builder
+			for i < len(rest) {
+				if rest[i] == '\\' && i+1 < len(rest) {
+					buf.WriteByte(rest[i+1])
+					i += 2
+				} else if rest[i] == '"' {
+					break
+				} else {
+					buf.WriteByte(rest[i])
+					i++
+				}
 			}
+			ariaName = buf.String()
 		}
 		// Inline text: - role: text
 		if ariaName == "" {
