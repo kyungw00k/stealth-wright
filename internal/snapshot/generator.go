@@ -89,13 +89,6 @@ func annotateAriaSnapshot(ariaSnapshot string, elements []protocol.ElementInfo) 
 		}
 		role := rest[:roleEnd]
 
-		// Skip ref injection for non-interactive structural roles.
-		// This keeps the snapshot clean — only elements an agent can act on get refs.
-		if !interactiveRoles[role] {
-			result = append(result, line)
-			continue
-		}
-
 		// Extract aria name from quoted string: - role "name" ...
 		// Handles backslash-escaped quotes inside the name (e.g. \"foo\").
 		ariaName := ""
@@ -179,8 +172,17 @@ func annotateAriaSnapshot(ariaSnapshot string, elements []protocol.ElementInfo) 
 			}
 		}
 
-		// No match: assign display-only ref
+		// No match against extracted elements.
+		// Only assign a display-only ref when the role is interactive —
+		// this avoids cluttering structural nodes (banner, article, etc.)
+		// that couldn't be matched. Matched elements always get a ref
+		// regardless of role (e.g. div[onclick] shows up as "generic" in
+		// ARIA but was explicitly collected by extractElements).
 		if matchedRef == "" {
+			if !interactiveRoles[role] {
+				result = append(result, line)
+				continue
+			}
 			matchedRef = fmt.Sprintf("e%d", extraRefCounter)
 			extraRefCounter++
 		}
