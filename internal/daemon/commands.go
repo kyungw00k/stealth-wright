@@ -637,6 +637,15 @@ func (s *Server) cmdClick(params json.RawMessage) (interface{}, error) {
 		}
 	}
 
+	// Wait for any navigation triggered by the click to settle before snapshot.
+	if sbPage, ok := inst.Page.(*seleniumbase.Page); ok {
+		pwPage := sbPage.PlaywrightPage()
+		_ = pwPage.WaitForLoadState(playwright.PageWaitForLoadStateOptions{
+			State:   playwright.LoadStateLoad,
+			Timeout: playwright.Float(15000),
+		})
+	}
+
 	snap := s.takeSnapshot(inst.Page)
 
 	return &protocol.CommandResult{

@@ -37,10 +37,10 @@ func (p *Page) Goto(url string, opts ...browser.GotoOption) error {
 		return err
 	}
 
-	// Best-effort wait for network to settle so JS rendering completes before snapshot.
+	// Best-effort wait for page to fully load before snapshot.
 	_ = p.pwPage.WaitForLoadState(playwright.PageWaitForLoadStateOptions{
-		State:   playwright.LoadStateNetworkidle,
-		Timeout: playwright.Float(5000),
+		State:   playwright.LoadStateLoad,
+		Timeout: playwright.Float(15000),
 	})
 	return nil
 }
