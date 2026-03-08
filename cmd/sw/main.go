@@ -2564,6 +2564,163 @@ func newUnrouteCmd() *cobra.Command {
 	}
 }
 
+func dirExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
+type agentDef struct {
+	Name      string
+	Detect    func(homeDir, xdgConfig string) string // returns skills dir or ""
+	Universal bool
+}
+
+var agentList = []agentDef{
+	{
+		Name: "Claude Code",
+		Detect: func(homeDir, xdgConfig string) string {
+			d := os.Getenv("CLAUDE_CONFIG_DIR")
+			if d == "" {
+				d = filepath.Join(homeDir, ".claude")
+			}
+			if dirExists(d) {
+				return filepath.Join(d, "skills")
+			}
+			return ""
+		},
+	},
+	{
+		Name:      "Codex",
+		Universal: true,
+		Detect: func(homeDir, xdgConfig string) string {
+			d := os.Getenv("CODEX_HOME")
+			if d == "" {
+				d = filepath.Join(homeDir, ".codex")
+			}
+			if dirExists(d) {
+				return filepath.Join(homeDir, ".agents", "skills")
+			}
+			return ""
+		},
+	},
+	{
+		Name:      "opencode",
+		Universal: true,
+		Detect: func(homeDir, xdgConfig string) string {
+			if dirExists(filepath.Join(xdgConfig, "opencode")) {
+				return filepath.Join(homeDir, ".agents", "skills")
+			}
+			return ""
+		},
+	},
+	{
+		Name:      "Cursor",
+		Universal: true,
+		Detect: func(homeDir, xdgConfig string) string {
+			if dirExists(filepath.Join(homeDir, ".cursor")) {
+				return filepath.Join(homeDir, ".agents", "skills")
+			}
+			return ""
+		},
+	},
+	{
+		Name:      "Gemini CLI",
+		Universal: true,
+		Detect: func(homeDir, xdgConfig string) string {
+			if dirExists(filepath.Join(homeDir, ".gemini")) {
+				return filepath.Join(homeDir, ".agents", "skills")
+			}
+			return ""
+		},
+	},
+}
+
+func installSkillsCmd() {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Error getting home directory:", err)
+		os.Exit(1)
+	}
+
+	xdgConfig := os.Getenv("XDG_CONFIG_HOME")
+	if xdgConfig == "" {
+		xdgConfig = filepath.Join(homeDir, ".config")
+	}
+
+	// 1. Extract embedded files to canonical store: ~/.sw/skills/sw/
+	canonicalDir := filepath.Join(homeDir, ".sw", "skills", "sw")
+	if err := os.MkdirAll(canonicalDir, 0755); err != nil {
+		fmt.Fprintln(os.Stderr, "Error creating canonical skills directory:", err)
+		os.Exit(1)
+	}
+	entries, err := skills.Files.ReadDir("sw")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Error reading embedded skills:", err)
+		os.Exit(1)
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		content, err := skills.Files.ReadFile("sw/" + e.Name())
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Error reading skill file:", err)
+			os.Exit(1)
+		}
+		if err := os.WriteFile(filepath.Join(canonicalDir, e.Name()), content, 0644); err != nil {
+			fmt.Fprintln(os.Stderr, "Error writing skill file:", err)
+			os.Exit(1)
+		}
+	}
+
+	fmt.Println("Canonical store:", canonicalDir)
+	fmt.Println()
+
+	// 2. Detect agents and create symlinks
+	universalInstalled := false
+	for _, agent := range agentList {
+		skillsDir := agent.Detect(homeDir, xdgConfig)
+		if skillsDir == "" {
+			fmt.Printf("  - %-14s (not detected)\n", agent.Name)
+			continue
+		}
+
+		// Universal agents share ~/.agents/skills/sw — only create symlink once
+		if agent.Universal && universalInstalled {
+			fmt.Printf("  ✓ %-14s → %s/sw\n", agent.Name, skillsDir)
+			continue
+		}
+
+		linkPath := filepath.Join(skillsDir, "sw")
+		if err := os.MkdirAll(skillsDir, 0755); err != nil {
+			fmt.Fprintf(os.Stderr, "  ✗ %-14s error creating dir: %v\n", agent.Name, err)
+			continue
+		}
+
+		// Handle existing path
+		if info, lerr := os.Lstat(linkPath); lerr == nil {
+			if info.Mode()&os.ModeSymlink != 0 {
+				os.Remove(linkPath) // replace existing symlink
+			} else if info.IsDir() {
+				fmt.Fprintf(os.Stderr, "  ! %-14s %s exists as real directory, skipping\n", agent.Name, linkPath)
+				continue
+			} else {
+				os.Remove(linkPath)
+			}
+		}
+
+		if err := os.Symlink(canonicalDir, linkPath); err != nil {
+			fmt.Fprintf(os.Stderr, "  ✗ %-14s error: %v\n", agent.Name, err)
+			continue
+		}
+
+		fmt.Printf("  ✓ %-14s → %s\n", agent.Name, linkPath)
+		if agent.Universal {
+			universalInstalled = true
+		}
+	}
+}
+
 func newInstallCmd() *cobra.Command {
 	var installSkills bool
 	cmd := &cobra.Command{
@@ -2571,40 +2728,13 @@ func newInstallCmd() *cobra.Command {
 		Short: "Initialize workspace",
 		Run: func(cmd *cobra.Command, args []string) {
 			if installSkills {
-				// Install sw skill files to .claude/skills/sw/
-				destDir := filepath.Join(".claude", "skills", "sw")
-				if err := os.MkdirAll(destDir, 0755); err != nil {
-					fmt.Fprintln(os.Stderr, "Error creating skills directory:", err)
-					os.Exit(1)
-				}
-				entries, err := skills.Files.ReadDir("sw")
-				if err != nil {
-					fmt.Fprintln(os.Stderr, "Error reading embedded skills:", err)
-					os.Exit(1)
-				}
-				for _, e := range entries {
-					if e.IsDir() {
-						continue
-					}
-					content, err := skills.Files.ReadFile("sw/" + e.Name())
-					if err != nil {
-						fmt.Fprintln(os.Stderr, "Error reading skill file:", err)
-						os.Exit(1)
-					}
-					dest := filepath.Join(destDir, e.Name())
-					if err := os.WriteFile(dest, content, 0644); err != nil {
-						fmt.Fprintln(os.Stderr, "Error writing skill file:", err)
-						os.Exit(1)
-					}
-					fmt.Println("Installed:", dest)
-				}
-				fmt.Println("Skills installed to", destDir)
+				installSkillsCmd()
 			} else {
 				fmt.Println("workspace initialized")
 			}
 		},
 	}
-	cmd.Flags().BoolVar(&installSkills, "skills", false, "install skills for claude / github copilot")
+	cmd.Flags().BoolVar(&installSkills, "skills", false, "install sw skill for AI coding agents (Claude Code, Codex, opencode, Cursor, Gemini CLI)")
 	return cmd
 }
 

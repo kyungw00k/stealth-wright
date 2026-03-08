@@ -16,14 +16,14 @@
 
 ```bash
 # Clone the repository
-git clone https://github.com/kyungw00k/sw.git
-cd sw
+git clone https://github.com/kyungw00k/stealth-wright.git
+cd stealth-wright
 
 # Build
-go build -o bin/sw ./cmd/sw
+go build -o build/sw ./cmd/sw
 
-# Or install globally
-go install ./cmd/sw
+# Install to ~/.local/bin
+make install
 ```
 
 ## Quick Start
@@ -328,20 +328,21 @@ Communication between CLI and Daemon uses JSON-RPC 2.0 over Unix sockets.
 
 ## AI Skill System
 
-For AI coding agents (Claude Code, GitHub Copilot, etc.), install the skill into your project:
+sw supports the [Agent Skills](https://vercel.com/docs/agent-resources/skills) open standard — a single skill works across 40+ AI coding agents (Claude Code, Cursor, Codex, opencode, GitHub Copilot, and more).
+
+### Install via npx skills (recommended)
 
 ```bash
-# Install sw skill files to .claude/skills/sw/
-sw install --skills
+npx skills add kyungw00k/stealth-wright
 ```
 
-This copies the built-in `SKILL.md` to `.claude/skills/sw/` so AI agents can discover how to use `sw`. Then reference it in your project's `CLAUDE.md`:
+This installs the `sw` skill to all detected AI tools on your system (Claude Code, Codex, opencode, etc.) using symlinks to a shared canonical location.
 
-```markdown
-# In your project's CLAUDE.md:
+### Install manually (no Node.js required)
 
-Use the sw skill for browser automation tasks.
-Skill location: .claude/skills/sw/SKILL.md
+```bash
+# Install sw skill files to .claude/skills/sw/ in the current project
+sw install --skills
 ```
 
 ### Example Usage with Claude Code
@@ -374,13 +375,13 @@ Claude:
 
 ```bash
 # Build
-go build -o bin/sw ./cmd/sw
+go build -o build/sw ./cmd/sw
 
 # Run unit tests
 go test ./...
 
 # Run integration tests (requires built binary)
-go build -o bin/sw ./cmd/sw
+go build -o build/sw ./cmd/sw
 go test -tags integration -v ./test/...
 
 # Lint
