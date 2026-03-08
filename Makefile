@@ -1,19 +1,26 @@
-.PHONY: build clean install run test help
+.PHONY: build clean install run test help deps fmt lint
 
 BINARY=sw
 MAIN_PATH=./cmd/sw
+BUILD_DIR=./build
 
 build:
-	go build -o bin/$(BINARY) $(MAIN_PATH)
+	@mkdir -p $(BUILD_DIR)
+	go build -o $(BUILD_DIR)/$(BINARY) $(MAIN_PATH)
 
-install:
-	go install $(MAIN_PATH)
+install: build
+	@INSTALL_DIR=$${PREFIX:-$$HOME/.local/bin}; \
+	mkdir -p $$INSTALL_DIR; \
+	cp $(BUILD_DIR)/$(BINARY) $$INSTALL_DIR/$(BINARY); \
+	chmod +x $$INSTALL_DIR/$(BINARY); \
+	echo "Installed to $$INSTALL_DIR/$(BINARY)"; \
+	echo "Make sure $$INSTALL_DIR is in your PATH"
 
 run:
 	go run $(MAIN_PATH) $(ARGS)
 
 clean:
-	rm -rf bin/
+	rm -rf $(BUILD_DIR)
 	go clean
 
 test:
@@ -31,8 +38,8 @@ deps:
 
 help:
 	@echo "Available targets:"
-	@echo "  build    - Build the binary"
-	@echo "  install  - Install to GOPATH/bin"
+	@echo "  build    - Build the binary to ./build/"
+	@echo "  install  - Install to ~/.local/bin (use PREFIX=/path to override)"
 	@echo "  run      - Run directly"
 	@echo "  clean    - Clean build artifacts"
 	@echo "  test     - Run tests"
