@@ -23,6 +23,30 @@ func NewGenerator(outputDir string) *Generator {
 	return &Generator{outputDir: outputDir}
 }
 
+// interactiveRoles is the set of ARIA roles that an AI agent can meaningfully
+// interact with (click, fill, hover, etc.). Only these roles receive [ref=eN]
+// annotations in the snapshot. Structural/presentational roles are omitted to
+// reduce noise.
+var interactiveRoles = map[string]bool{
+	"link":              true,
+	"button":            true,
+	"textbox":           true,
+	"searchbox":         true,
+	"combobox":          true,
+	"checkbox":          true,
+	"radio":             true,
+	"listbox":           true,
+	"option":            true,
+	"menuitem":          true,
+	"menuitemcheckbox":  true,
+	"menuitemradio":     true,
+	"tab":               true,
+	"switch":            true,
+	"slider":            true,
+	"spinbutton":        true,
+	"img":               true, // needed for screenshot --ref and annotated screenshots
+}
+
 // roleToTags maps ARIA roles to HTML tag names for matching
 var roleToTags = map[string][]string{
 	"heading":   {"h1", "h2", "h3", "h4", "h5", "h6"},
@@ -64,6 +88,13 @@ func annotateAriaSnapshot(ariaSnapshot string, elements []protocol.ElementInfo) 
 			roleEnd = len(rest)
 		}
 		role := rest[:roleEnd]
+
+		// Skip ref injection for non-interactive structural roles.
+		// This keeps the snapshot clean — only elements an agent can act on get refs.
+		if !interactiveRoles[role] {
+			result = append(result, line)
+			continue
+		}
 
 		// Extract aria name from quoted string: - role "name" ...
 		// Handles backslash-escaped quotes inside the name (e.g. \"foo\").
