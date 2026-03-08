@@ -630,6 +630,9 @@ func newClickCmd() *cobra.Command {
 			if len(modifiers) > 0 {
 				params["modifiers"] = modifiers
 			}
+			if force, _ := cmd.Flags().GetBool("force"); force {
+				params["force"] = true
+			}
 
 			resp, err := cli.Call("click", params)
 			if err != nil {
@@ -666,6 +669,7 @@ func newClickCmd() *cobra.Command {
 	cmd.Flags().String("text", "", "Element text for semantic targeting")
 	cmd.Flags().String("label", "", "ARIA label for semantic targeting")
 	cmd.Flags().Bool("exact", false, "Require exact match for semantic targeting")
+	cmd.Flags().Bool("force", false, "Bypass actionability checks (useful for elements hidden by sticky headers)")
 	return cmd
 }
 

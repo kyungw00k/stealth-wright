@@ -598,38 +598,44 @@ func (s *Server) cmdClick(params json.RawMessage) (interface{}, error) {
 		return nil, err
 	}
 
-	// Use playwright directly when modifiers or non-default button are specified
-	if len(p.Modifiers) > 0 || (p.Button != "" && p.Button != "left") {
-		if sbPage, ok := inst.Page.(*seleniumbase.Page); ok {
-			pwPage := sbPage.PlaywrightPage()
-			opts := playwright.PageClickOptions{}
-			if p.Button != "" {
-				switch p.Button {
-				case "right":
-					opts.Button = playwright.MouseButtonRight
-				case "middle":
-					opts.Button = playwright.MouseButtonMiddle
-				}
+	// Use playwright directly for modifiers, non-default button, or force flag.
+	if sbPage, ok := inst.Page.(*seleniumbase.Page); ok {
+		pwPage := sbPage.PlaywrightPage()
+		opts := playwright.PageClickOptions{}
+		if p.Button != "" {
+			switch p.Button {
+			case "right":
+				opts.Button = playwright.MouseButtonRight
+			case "middle":
+				opts.Button = playwright.MouseButtonMiddle
 			}
-			for _, mod := range p.Modifiers {
-				switch mod {
-				case "Alt":
-					opts.Modifiers = append(opts.Modifiers, *playwright.KeyboardModifierAlt)
-				case "Control":
-					opts.Modifiers = append(opts.Modifiers, *playwright.KeyboardModifierControl)
-				case "Meta":
-					opts.Modifiers = append(opts.Modifiers, *playwright.KeyboardModifierMeta)
-				case "Shift":
-					opts.Modifiers = append(opts.Modifiers, *playwright.KeyboardModifierShift)
-				}
+		}
+		for _, mod := range p.Modifiers {
+			switch mod {
+			case "Alt":
+				opts.Modifiers = append(opts.Modifiers, *playwright.KeyboardModifierAlt)
+			case "Control":
+				opts.Modifiers = append(opts.Modifiers, *playwright.KeyboardModifierControl)
+			case "Meta":
+				opts.Modifiers = append(opts.Modifiers, *playwright.KeyboardModifierMeta)
+			case "Shift":
+				opts.Modifiers = append(opts.Modifiers, *playwright.KeyboardModifierShift)
 			}
-			if err := pwPage.Click(selector, opts); err != nil {
-				return nil, err
+		}
+		if p.Force {
+			opts.Force = playwright.Bool(true)
+		}
+		clickErr := pwPage.Click(selector, opts)
+		if clickErr != nil && !p.Force {
+			// Fallback: JS click bypasses sticky-header / obscured-element issues.
+			_, jsErr := inst.Page.Evaluate(
+				fmt.Sprintf("document.querySelector(%q)?.click()", selector),
+			)
+			if jsErr != nil {
+				return nil, clickErr // return original error
 			}
-		} else {
-			if err := inst.Page.Click(selector); err != nil {
-				return nil, err
-			}
+		} else if clickErr != nil {
+			return nil, clickErr
 		}
 	} else {
 		if err := inst.Page.Click(selector); err != nil {

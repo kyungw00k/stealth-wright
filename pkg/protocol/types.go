@@ -110,6 +110,7 @@ type ClickParams struct {
 	Exact       bool     `json:"exact,omitempty"`
 	Button      string   `json:"button,omitempty"` // left, right, middle
 	Modifiers   []string `json:"modifiers,omitempty"`
+	Force       bool     `json:"force,omitempty"` // bypass actionability checks
 }
 
 // CookieSetParams represents parameters for the cookie-set command.
