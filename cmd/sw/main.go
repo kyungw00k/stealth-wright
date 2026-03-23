@@ -17,6 +17,8 @@ import (
 	playwright "github.com/playwright-community/playwright-go"
 	"github.com/spf13/cobra")
 
+var Version = "dev"
+
 var (
 	// Global options
 	sessionName   string
@@ -40,7 +42,7 @@ func main() {
 
 It provides Playwright CLI-like UX with built-in stealth mode for 
 undetected browser automation.`,
-		Version: "0.1.0",
+		Version: Version,
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
 			// Initialize client — each session routes to its own socket
 			cli = client.NewClient(&client.Config{

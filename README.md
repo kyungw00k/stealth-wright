@@ -14,6 +14,14 @@
 
 ## Installation
 
+### Homebrew
+
+```bash
+brew install kyungw00k/cli/sw
+```
+
+### From Source
+
 ```bash
 # Clone the repository
 git clone https://github.com/kyungw00k/stealth-wright.git

@@ -3,10 +3,12 @@
 BINARY=sw
 MAIN_PATH=./cmd/sw
 BUILD_DIR=./build
+VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+LDFLAGS := -ldflags "-s -w -X main.Version=$(VERSION)"
 
 build:
 	@mkdir -p $(BUILD_DIR)
-	go build -o $(BUILD_DIR)/$(BINARY) $(MAIN_PATH)
+	go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY) $(MAIN_PATH)
 
 install: build
 	@INSTALL_DIR=$${PREFIX:-$$HOME/.local/bin}; \
