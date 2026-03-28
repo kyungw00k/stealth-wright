@@ -419,7 +419,7 @@ sw/
 
 ## Claude Code Skill
 
-AI 에이전트가 stealth-wright를 자동으로 활용할 수 있는 Claude Code 스킬이 제공됩니다.
+A Claude Code skill is available for AI agents to use stealth-wright automatically.
 
 ```
 /plugin marketplace add kyungw00k/skills
