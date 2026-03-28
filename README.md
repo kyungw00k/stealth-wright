@@ -417,6 +417,15 @@ sw/
 └── README.md
 ```
 
+## Claude Code Skill
+
+AI 에이전트가 stealth-wright를 자동으로 활용할 수 있는 Claude Code 스킬이 제공됩니다.
+
+```
+/plugin marketplace add kyungw00k/skills
+/plugin install cli-tools@kyungw00k-skills
+```
+
 ## License
 
 MIT
